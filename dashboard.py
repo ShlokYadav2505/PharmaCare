@@ -1,5 +1,5 @@
 # dashboard.py - basic sidebar + pages
-# UI unchanged. Logic: auto low-stock/expiry alerts on login + every 6h.
+# UI unchanged. Login identity is the email.
 
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -8,14 +8,15 @@ import database as db
 
 
 class DashboardApp(tk.Frame):
-    def __init__(self, parent, username, user_id, on_logout_callback):
+    def __init__(self, parent, email, user_id, on_logout_callback):
         super().__init__(parent, bg="#F0F0F0")
-        self._username = username
         self._user_id = user_id
         self._on_logout = on_logout_callback
-        user = db.get_user_by_username(username)
-        self._user_email = user["email"] if user else ""
-        # Role: 'admin' or 'user' (default user if column missing on old DBs)
+        user = db.get_user_by_email(email)
+        if not user:
+            user = db.get_user_by_username(email)
+        self._user_email = user["email"] if user else email
+        self._username = self._user_email
         self._role = (user.get("role") or "user").lower() if user else "user"
         self._is_admin = self._role == "admin"
         self._frames = {}
@@ -28,20 +29,18 @@ class DashboardApp(tk.Frame):
         self.rowconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
 
-        # Simple sidebar
         sb = tk.Frame(self, bg="#1B5E20", width=160)
         sb.grid(row=0, column=0, sticky="ns")
         sb.grid_propagate(False)
 
         tk.Label(sb, text="PharmaCare", font=("Arial", 14, "bold"),
                  bg="#1B5E20", fg="white").pack(pady=(20, 2))
-        role_label = f"{self._username} ({self._role})"
+        role_label = self._role
         tk.Label(sb, text=role_label, font=("Arial", 9),
                  bg="#1B5E20", fg="#A5D6A7").pack(pady=(0, 15))
 
         nav_items = [("Dashboard", "home"), ("Inventory", "inventory"),
                      ("Billing", "billing"), ("Reports", "reports")]
-        # Admin-only: User Management
         if self._is_admin:
             nav_items.append(("Users", "users"))
 
@@ -71,7 +70,7 @@ class DashboardApp(tk.Frame):
 
     def _make(self, key):
         if key == "home":
-            return HomeFrame(self._content, self._username, self._user_id, self._switch)
+            return HomeFrame(self._content, self._user_email, self._user_id, self._switch)
         if key == "inventory":
             from inventory import InventoryFrame
             return InventoryFrame(self._content, user_id=self._user_id, user_email=self._user_email)
@@ -86,7 +85,6 @@ class DashboardApp(tk.Frame):
             return UsersFrame(self._content, current_user_id=self._user_id)
 
     def _check_alerts(self):
-        """Automatic low-stock & expiry alerts (email + notice)."""
         import smtp_handler as smtp
         ls = db.get_low_stock_medicines(self._user_id)
         ex = db.get_expired_medicines(self._user_id)
@@ -101,7 +99,6 @@ class DashboardApp(tk.Frame):
             if self._user_email:
                 db.enqueue_alert("expired", self._user_email, ex)
                 smtp.send_expired_medicine_alert(self._user_email, ex)
-        # Drain queue (Criterion D – process FIFO)
         while db.pending_alert_count() > 0:
             db.dequeue_alert()
         if parts and self._user_email:
@@ -131,7 +128,6 @@ class HomeFrame(tk.Frame):
         tk.Label(self, text=datetime.now().strftime("%A, %d %B %Y"),
                  font=("Arial", 10), bg="#F0F0F0").pack(anchor="w", padx=20)
 
-        # Stats row
         stats = tk.Frame(self, bg="#F0F0F0")
         stats.pack(fill="x", padx=20, pady=15)
         self._lbl_meds = self._stat_box(stats, "Total Medicines")
@@ -139,7 +135,6 @@ class HomeFrame(tk.Frame):
         self._lbl_low = self._stat_box(stats, "Low Stock")
         self._lbl_exp = self._stat_box(stats, "Expired")
 
-        # Buttons
         btns = tk.Frame(self, bg="#F0F0F0")
         btns.pack(anchor="w", padx=20, pady=5)
         tk.Button(btns, text="Inventory", command=lambda: self._navigate("inventory")).pack(side="left", padx=3)
