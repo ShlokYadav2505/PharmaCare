@@ -1,5 +1,6 @@
 # users.py - Admin User Management (Edit / Delete users)
 # UI style matches the rest of the app (simple Arial + #F0F0F0)
+# Login identity is the email. There is no separate username.
 
 import re
 import tkinter as tk
@@ -8,8 +9,6 @@ import database as db
 
 
 class UsersFrame(tk.Frame):
-    """Admin-only screen to view, edit and delete user accounts."""
-
     def __init__(self, parent, current_user_id=None):
         super().__init__(parent, bg="#F0F0F0")
         self._current_user_id = current_user_id
@@ -37,12 +36,11 @@ class UsersFrame(tk.Frame):
 
         tf = tk.Frame(self)
         tf.pack(fill="both", expand=True, padx=15, pady=5)
-        cols = ("id", "username", "email", "role", "created")
+        cols = ("id", "email", "role", "created")
         self._tree = ttk.Treeview(tf, columns=cols, show="headings",
                                   selectmode="browse")
-        for col, hd, w in [("id", "ID", 50), ("username", "Username", 140),
-                           ("email", "Email", 200), ("role", "Role", 80),
-                           ("created", "Created", 140)]:
+        for col, hd, w in [("id", "ID", 50), ("email", "Email", 240),
+                           ("role", "Role", 80), ("created", "Created", 140)]:
             self._tree.heading(col, text=hd)
             self._tree.column(col, width=w)
         sb = ttk.Scrollbar(tf, orient="vertical", command=self._tree.yview)
@@ -65,8 +63,7 @@ class UsersFrame(tk.Frame):
         for u in rows:
             created = str(u.get("created_at", ""))[:19]
             self._tree.insert("", "end", iid=str(u["id"]), values=(
-                u["id"], u["username"], u["email"],
-                u.get("role", "user"), created))
+                u["id"], u["email"], u.get("role", "user"), created))
         self._status.config(text=f"{len(rows)} user(s)")
 
     def _on_select(self, _=None):
@@ -91,12 +88,12 @@ class UsersFrame(tk.Frame):
                                  parent=self.winfo_toplevel())
             return
         UserDialog(self.winfo_toplevel(), "Edit User",
-                   lambda uname, email, role: self._handle_edit(
-                       self._selected_id, uname, email, role),
+                   lambda email, role: self._handle_edit(
+                       self._selected_id, email, role),
                    user=user)
 
-    def _handle_edit(self, uid, username, email, role):
-        ok, msg = db.update_user(uid, username, email, role)
+    def _handle_edit(self, uid, email, role):
+        ok, msg = db.update_user(uid, email, email, role)
         if ok:
             self.refresh()
             messagebox.showinfo("Success", msg, parent=self.winfo_toplevel())
@@ -119,7 +116,7 @@ class UsersFrame(tk.Frame):
             return
         if messagebox.askyesno(
                 "Delete User",
-                f"Delete user '{user['username']}'?\n"
+                f"Delete user '{user['email']}'?\n"
                 "This will also delete their medicines and transactions.\n"
                 "This cannot be undone.",
                 parent=self.winfo_toplevel()):
@@ -132,15 +129,13 @@ class UsersFrame(tk.Frame):
 
 
 class UserDialog(tk.Toplevel):
-    """Dialog to edit username, email and role."""
-
     def __init__(self, parent, title, on_save, user=None):
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
         self.grab_set()
         self._on_save = on_save
-        self.geometry("360x280")
+        self.geometry("360x240")
         self._build(title)
         if user:
             self._populate(user)
@@ -150,18 +145,14 @@ class UserDialog(tk.Toplevel):
         f = tk.Frame(self)
         f.pack(padx=25)
 
-        tk.Label(f, text="Username *", font=("Arial", 10)).grid(row=0, column=0, sticky="w")
-        self._uname = tk.Entry(f, width=32)
-        self._uname.grid(row=1, column=0, pady=(0, 8))
-
-        tk.Label(f, text="Email *", font=("Arial", 10)).grid(row=2, column=0, sticky="w")
+        tk.Label(f, text="Email *", font=("Arial", 10)).grid(row=0, column=0, sticky="w")
         self._email = tk.Entry(f, width=32)
-        self._email.grid(row=3, column=0, pady=(0, 8))
+        self._email.grid(row=1, column=0, pady=(0, 8))
 
-        tk.Label(f, text="Role *", font=("Arial", 10)).grid(row=4, column=0, sticky="w")
+        tk.Label(f, text="Role *", font=("Arial", 10)).grid(row=2, column=0, sticky="w")
         self._role = ttk.Combobox(f, values=["user", "admin"], state="readonly", width=30)
         self._role.set("user")
-        self._role.grid(row=5, column=0, pady=(0, 8))
+        self._role.grid(row=3, column=0, pady=(0, 8))
 
         self._msg = tk.Label(self, text="", fg="red", font=("Arial", 9), wraplength=300)
         self._msg.pack(pady=4)
@@ -172,28 +163,22 @@ class UserDialog(tk.Toplevel):
         tk.Button(row, text="Save", width=10, command=self._save).pack(side="left", padx=5)
 
     def _populate(self, u):
-        self._uname.insert(0, u.get("username", ""))
         self._email.insert(0, u.get("email", ""))
         self._role.set(u.get("role", "user") or "user")
 
     def _save(self):
         self._msg.config(text="")
-        uname = self._uname.get().strip()
-        email = self._email.get().strip()
+        email = self._email.get().strip().lower()
         role = self._role.get().strip().lower()
 
-        if not uname:
-            self._msg.config(text="Username is required."); return
-        if len(uname) < 3:
-            self._msg.config(text="Username must be at least 3 characters."); return
-        if not re.match(r"^[A-Za-z0-9_]+$", uname):
-            self._msg.config(text="Username: only letters, numbers, underscore."); return
         if not email:
             self._msg.config(text="Email is required."); return
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
             self._msg.config(text="Enter a valid email address."); return
+        if len(email) > 100:
+            self._msg.config(text="Email is too long."); return
         if role not in ("user", "admin"):
             self._msg.config(text="Role must be 'user' or 'admin'."); return
 
-        self._on_save(uname, email, role)
+        self._on_save(email, role)
         self.destroy()
