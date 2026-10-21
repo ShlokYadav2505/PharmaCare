@@ -1,146 +1,201 @@
-# signup.py
-# create account with email + OTP
-# no username and no random code
-# after success -> go straight to dashboard
-
-import re
-import tkinter as tk
+import re, tkinter as tk
 from tkinter import messagebox
 import database as db
 import smtp_handler as smtp
+import styles as st
 
 
 class SignupWindow(tk.Toplevel):
-    def __init__(self, parent, on_success=None):
+    def __init__(self, parent):
         super().__init__(parent)
-        self.title("Create Account")
+        self.title("PharmaCare – Create Account")
         self.resizable(False, False)
         self.grab_set()
-        self.on_success = on_success
-        self.otp_sent = False
-        self.build()
-        self.geometry("420x420")
+        self.configure(bg=st.COLORS["white"])
+        self._otp_sent = False
+        self._build_ui()
+        self._center(520, 620)
 
-    def build(self):
-        tk.Label(self, text="Create Account", font=("Arial", 14, "bold")).pack(pady=12)
+    def _center(self, w, h):
+        self.update_idletasks()
+        x = (self.winfo_screenwidth()  - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
-        f = tk.Frame(self)
-        f.pack(padx=30)
+    def _make_field(self, parent, label, show=""):
+        f = tk.Frame(parent, bg=st.COLORS["white"])
+        f.pack(fill="x", padx=36, pady=(0, 10))
+        tk.Label(f, text=label,
+                 font=("Calibri", 11, "bold"),
+                 bg=st.COLORS["white"],
+                 fg=st.COLORS["text_medium"]).pack(anchor="w")
+        var = tk.StringVar()
+        e = tk.Entry(f, textvariable=var, show=show,
+                     font=("Calibri", 12),
+                     bg=st.COLORS["entry_bg"],
+                     fg=st.COLORS["text_dark"],
+                     relief="solid", bd=1,
+                     highlightthickness=1,
+                     highlightbackground=st.COLORS["entry_border"],
+                     highlightcolor=st.COLORS["primary"])
+        e.pack(fill="x", ipady=7, pady=(4, 0))
+        return var, e
 
-        tk.Label(f, text="Email *", font=("Arial", 10)).grid(row=0, column=0, sticky="w")
-        self.email = tk.Entry(f, width=36)
-        self.email.grid(row=1, column=0, pady=(0, 8))
+    def _build_ui(self):
+        # Header
+        hdr = tk.Frame(self, bg=st.COLORS["primary_dark"])
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="✚  Create Account",
+                 font=("Calibri", 16, "bold"),
+                 bg=st.COLORS["primary_dark"],
+                 fg=st.COLORS["white"]).pack(pady=18)
 
-        tk.Label(f, text="Password * (min 6 characters)", font=("Arial", 10)).grid(
-            row=2, column=0, sticky="w")
-        self.password = tk.Entry(f, width=36, show="*")
-        self.password.grid(row=3, column=0, pady=(0, 8))
+        tk.Frame(self, bg=st.COLORS["white"], height=10).pack()
 
-        tk.Label(f, text="Confirm Password *", font=("Arial", 10)).grid(
-            row=4, column=0, sticky="w")
-        self.cpassword = tk.Entry(f, width=36, show="*")
-        self.cpassword.grid(row=5, column=0, pady=(0, 8))
+        # Form fields
+        self._uname, _ = self._make_field(self, "Username")
+        self._email, _ = self._make_field(self, "Email Address")
+        self._pass,  _ = self._make_field(self, "Password", show="•")
+        self._cpass, _ = self._make_field(self, "Confirm Password", show="•")
 
-        tk.Label(f, text="OTP (6 digits from email)", font=("Arial", 10)).grid(
-            row=6, column=0, sticky="w")
-        otp_row = tk.Frame(f)
-        otp_row.grid(row=7, column=0, sticky="ew", pady=(0, 8))
-        self.otp = tk.Entry(otp_row, width=18)
-        self.otp.pack(side="left")
-        self.send_btn = tk.Button(otp_row, text="Send OTP", command=self.send_otp)
-        self.send_btn.pack(side="left", padx=6)
+        # OTP row
+        otp_f = tk.Frame(self, bg=st.COLORS["white"])
+        otp_f.pack(fill="x", padx=36, pady=(0, 10))
+        tk.Label(otp_f, text="Email OTP",
+                 font=("Calibri", 11, "bold"),
+                 bg=st.COLORS["white"],
+                 fg=st.COLORS["text_medium"]).pack(anchor="w")
+        row = tk.Frame(otp_f, bg=st.COLORS["white"])
+        row.pack(fill="x", pady=(4, 0))
+        self._otp = tk.StringVar()
+        tk.Entry(row, textvariable=self._otp,
+                 font=("Calibri", 12),
+                 bg=st.COLORS["entry_bg"],
+                 fg=st.COLORS["text_dark"],
+                 relief="solid", bd=1).pack(side="left", fill="x",
+                                            expand=True, ipady=7)
+        self._send_btn = tk.Button(row, text="Send OTP",
+                                   command=self._send_otp,
+                                   font=("Calibri", 10, "bold"),
+                                   bg=st.COLORS["primary"],
+                                   fg=st.COLORS["white"],
+                                   relief="flat", bd=0, cursor="hand2",
+                                   padx=14, pady=6,
+                                   activebackground=st.COLORS["primary_dark"],
+                                   activeforeground=st.COLORS["white"])
+        self._send_btn.pack(side="left", padx=(8, 0))
 
-        self.msg = tk.Label(self, text="", fg="red", font=("Arial", 9), wraplength=360)
-        self.msg.pack(pady=4)
+        # Message label
+        self._msg_var = tk.StringVar()
+        self._msg_lbl = tk.Label(self, textvariable=self._msg_var,
+                                  font=("Calibri", 10),
+                                  bg=st.COLORS["white"],
+                                  fg=st.COLORS["danger"],
+                                  wraplength=440, justify="center")
+        self._msg_lbl.pack(padx=36, pady=(0, 6))
 
-        tk.Button(self, text="Verify OTP & Create Account",
-                  command=self.do_register, width=32).pack(pady=6)
-        tk.Button(self, text="Back", command=self.destroy).pack()
+        # Register button  ← renamed to _do_register (fixes the Tkinter conflict)
+        btn = tk.Button(self, text="Verify OTP & Create Account",
+                        command=self._do_register,
+                        font=("Calibri", 12, "bold"),
+                        bg=st.COLORS["primary"],
+                        fg=st.COLORS["white"],
+                        relief="flat", bd=0, cursor="hand2",
+                        padx=24, pady=10,
+                        activebackground=st.COLORS["primary_dark"],
+                        activeforeground=st.COLORS["white"])
+        btn.pack(fill="x", padx=36, pady=(0, 12))
 
-    def validate_form(self):
-        em = self.email.get().strip()
-        pw = self.password.get()
-        cp = self.cpassword.get()
+        tk.Button(self, text="← Back to Login",
+                  command=self.destroy,
+                  font=("Calibri", 10),
+                  bg=st.COLORS["white"],
+                  fg=st.COLORS["primary"],
+                  relief="flat", bd=0,
+                  cursor="hand2",
+                  activebackground=st.COLORS["white"],
+                  activeforeground=st.COLORS["primary_dark"]
+                  ).pack(pady=(0, 16))
 
-        if em == "":
-            self.msg.config(text="Email is required.", fg="red")
-            return False
+    def _set_msg(self, text, error=True):
+        self._msg_var.set(text)
+        self._msg_lbl.config(
+            fg=st.COLORS["danger"] if error else st.COLORS["success"])
+
+    def _validate(self):
+        u  = self._uname.get().strip()
+        em = self._email.get().strip()
+        pw = self._pass.get()
+        cp = self._cpass.get()
+        if not u:
+            self._set_msg("Username is required."); return False
+        if len(u) < 3:
+            self._set_msg("Username must be at least 3 characters."); return False
+        if not em:
+            self._set_msg("Email is required."); return False
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", em):
-            self.msg.config(text="Enter a valid email (e.g. name@gmail.com).", fg="red")
-            return False
-        if len(em) > 100:
-            self.msg.config(text="Email is too long.", fg="red")
-            return False
-        if pw == "":
-            self.msg.config(text="Password is required.", fg="red")
-            return False
+            self._set_msg("Enter a valid email address."); return False
+        if not pw:
+            self._set_msg("Password is required."); return False
         if len(pw) < 6:
-            self.msg.config(text="Password must be at least 6 characters.", fg="red")
-            return False
+            self._set_msg("Password must be at least 6 characters."); return False
         if pw != cp:
-            self.msg.config(text="Passwords do not match.", fg="red")
-            return False
+            self._set_msg("Passwords do not match."); return False
+        if db.get_user_by_username(u):
+            self._set_msg("Username already taken."); return False
         if db.get_user_by_email(em):
-            self.msg.config(text="Email already registered.", fg="red")
-            return False
+            self._set_msg("Email already registered."); return False
         return True
 
-    def send_otp(self):
-        if not self.validate_form():
+    def _send_otp(self):
+        self._msg_var.set("")
+        if not self._validate():
             return
-        email = self.email.get().strip()
-        self.msg.config(text="Sending OTP…", fg="blue")
-        self.send_btn.config(state="disabled")
+        email = self._email.get().strip()
+        self._set_msg("Sending OTP… please wait.", error=False)
+        self._send_btn.config(state="disabled", text="Sending…")
 
         def after(ok, msg):
-            self.after(0, lambda: self.after_send(ok, msg))
+            self.after(0, lambda: self._after_send(ok, msg))
+
         smtp.send_otp_email(email, purpose="account verification", callback=after)
 
-    def after_send(self, ok, msg):
-        self.send_btn.config(state="normal", text="Resend OTP")
+    def _after_send(self, ok, msg):
+        self._send_btn.config(state="normal", text="Resend OTP")
         if ok:
-            self.otp_sent = True
-            self.msg.config(text="OTP sent. Check your email (and Spam).", fg="green")
+            self._otp_sent = True
+            self._set_msg(
+                f"OTP sent to {self._email.get().strip()}. Check your inbox.",
+                error=False)
         else:
-            self.msg.config(text="Failed to send OTP: " + str(msg), fg="red")
+            self._set_msg(f"Failed to send OTP: {msg}")
 
-    def do_register(self):
-        if not self.otp_sent:
-            self.msg.config(text="Please send OTP to your email first.", fg="red")
+    # ← KEY FIX: renamed from _register to _do_register
+    def _do_register(self):
+        self._msg_var.set("")
+        if not self._otp_sent:
+            self._set_msg("Please send the OTP to your email first.")
             return
-        otp = self.otp.get().strip()
-        if otp == "":
-            self.msg.config(text="Enter the OTP from your email.", fg="red")
+        otp = self._otp.get().strip()
+        if not otp:
+            self._set_msg("Please enter the OTP from your email.")
             return
-        if not otp.isdigit() or len(otp) != 6:
-            self.msg.config(text="OTP must be a 6-digit number.", fg="red")
-            return
-        email = self.email.get().strip().lower()
-        ok, msg = smtp.verify_otp(email, otp)
+        ok, msg = smtp.verify_otp(self._email.get().strip(), otp)
         if not ok:
-            self.msg.config(text=msg, fg="red")
+            self._set_msg(msg)
             return
-
-        # username column stores the email so there is no extra login name
-        ok2, msg2 = db.create_user(email, email, self.password.get())
-        if not ok2:
-            self.msg.config(text=msg2, fg="red")
-            return
-
-        user = db.get_user_by_email(email)
-        if not user:
-            self.msg.config(text="Account created but login failed. Please log in.", fg="red")
-            return
-
-        user_id = int(user["id"])
-        smtp.send_welcome_email(email, email)
-
-        messagebox.showinfo(
-            "Welcome",
-            "Account created.\n\nLog in next time with this email.\n\nOpening dashboard…",
-            parent=self)
-
-        callback = self.on_success
-        self.destroy()
-        if callback:
-            callback(email, user_id)
+        ok2, msg2 = db.create_user(
+            self._uname.get().strip(),
+            self._email.get().strip(),
+            self._pass.get())
+        if ok2:
+            smtp.send_welcome_email(
+                self._email.get().strip(),
+                self._uname.get().strip())
+            messagebox.showinfo(
+                "Account Created",
+                "Your account has been created!\nYou can now log in.",
+                parent=self)
+            self.destroy()
+        else:
+            self._set_msg(msg2)

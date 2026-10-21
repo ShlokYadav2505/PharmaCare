@@ -1,60 +1,108 @@
-# inventory.py
-# inventory add / edit / delete + google-like name search
-
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 import database as db
 import smtp_handler as smtp
+import styles as st
 
 
 class InventoryFrame(tk.Frame):
-    def __init__(self, parent, user_id=None, user_email=""):
-        super().__init__(parent, bg="#F0F0F0")
-        self._user_id = user_id
-        self._user_email = user_email
+    def __init__(self, parent, user_email=""):
+        super().__init__(parent, bg=st.COLORS["background"])
+        self._user_email  = user_email
         self._selected_id = None
-        self._build()
+        self._build_ui()
         self.refresh()
 
-    def _build(self):
-        top = tk.Frame(self, bg="#F0F0F0")
-        top.pack(fill="x", padx=15, pady=10)
-        tk.Label(top, text="Inventory", font=("Arial", 16, "bold"),
-                 bg="#F0F0F0").pack(side="left")
-        self._search = tk.Entry(top, width=25)
-        self._search.pack(side="right")
-        self._search.bind("<KeyRelease>", lambda e: self._do_search())
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
 
-        btns = tk.Frame(self, bg="#F0F0F0")
-        btns.pack(fill="x", padx=15, pady=5)
-        tk.Button(btns, text="Add", command=self._open_add).pack(side="left", padx=2)
-        self._edit_btn = tk.Button(btns, text="Edit", command=self._open_edit, state="disabled")
-        self._edit_btn.pack(side="left", padx=2)
-        self._del_btn = tk.Button(btns, text="Delete", command=self._do_delete, state="disabled")
-        self._del_btn.pack(side="left", padx=2)
-        tk.Button(btns, text="Low Stock Alert", command=self._alert_low).pack(side="right", padx=2)
-        tk.Button(btns, text="Expiry Alert", command=self._alert_expired).pack(side="right", padx=2)
+        # Title + search bar
+        top = tk.Frame(self, bg=st.COLORS["background"])
+        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(16,8))
+        top.columnconfigure(1, weight=1)
+        tk.Label(top, text="Inventory Management", font=st.FONTS["heading"],
+                 bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).grid(row=0, column=0, sticky="w")
 
-        tf = tk.Frame(self)
-        tf.pack(fill="both", expand=True, padx=15, pady=5)
-        cols = ("sno", "name", "qty", "price", "expiry", "min_stock", "status")
-        self._tree = ttk.Treeview(tf, columns=cols, show="headings", selectmode="browse")
-        for col, hd, w in [("sno", "S.No.", 50), ("name", "Medicine", 160),
-                           ("qty", "Qty", 60), ("price", "Price", 80),
-                           ("expiry", "Expiry", 100), ("min_stock", "Min", 50),
-                           ("status", "Status", 90)]:
-            self._tree.heading(col, text=hd)
-            self._tree.column(col, width=w)
-        sb = ttk.Scrollbar(tf, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=sb.set)
-        self._tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
+        sf = tk.Frame(top, bg=st.COLORS["white"],
+                      highlightbackground=st.COLORS["entry_border"], highlightthickness=1)
+        sf.grid(row=0, column=1, sticky="e", padx=(20,0))
+        tk.Label(sf, text="🔍", bg=st.COLORS["white"],
+                 fg=st.COLORS["text_light"], font=("Calibri",12)).pack(side="left", padx=(8,0))
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", lambda *_: self._do_search())
+        se = tk.Entry(sf, textvariable=self._search_var, font=st.FONTS["entry"],
+                      bg=st.COLORS["white"], fg=st.COLORS["text_dark"],
+                      relief="flat", bd=0, width=26)
+        se.pack(side="left", ipady=6, padx=(4,8))
+
+        # Buttons
+        bb = tk.Frame(self, bg=st.COLORS["background"])
+        bb.grid(row=1, column=0, sticky="ew", padx=20, pady=(0,8))
+
+        add = tk.Button(bb, text="+ Add Medicine",
+                        command=self._open_add, **st.BUTTON["primary"])
+        add.pack(side="left", padx=(0,8))
+        st.add_hover(add, st.COLORS["primary"], st.COLORS["primary_dark"])
+
+        self._edit_btn = tk.Button(bb, text="✏ Edit",
+                                   command=self._open_edit,
+                                   state="disabled", **st.BUTTON["secondary"])
+        self._edit_btn.pack(side="left", padx=(0,8))
+
+        self._del_btn = tk.Button(bb, text="🗑 Delete",
+                                  command=self._do_delete,
+                                  state="disabled", **st.BUTTON["danger"])
+        self._del_btn.pack(side="left")
+        st.add_hover(self._del_btn, st.COLORS["danger"], "#B71C1C")
+
+        ab = tk.Button(bb, text="📧 Low Stock Alert",
+                       command=self._alert_low, **st.BUTTON["warning"])
+        ab.pack(side="right", padx=(8,0))
+        st.add_hover(ab, st.COLORS["warning"], "#BF360C")
+
+        eb = tk.Button(bb, text="📧 Expiry Alert",
+                       command=self._alert_expired, **st.BUTTON["sm_danger"])
+        eb.pack(side="right", padx=(8,0))
+        st.add_hover(eb, st.COLORS["danger"], "#B71C1C")
+
+        # Treeview
+        tf = tk.Frame(self, bg=st.COLORS["white"])
+        tf.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0,8))
+        tf.columnconfigure(0, weight=1); tf.rowconfigure(0, weight=1)
+
+        sty = ttk.Style()
+        st.apply_treeview_style(sty, "Inv.Treeview")
+
+        cols = ("id","name","qty","price","expiry","min_stock","status")
+        self._tree = ttk.Treeview(tf, columns=cols, show="headings",
+                                   style="Inv.Treeview", selectmode="browse")
+        cfg = [("id","ID",55,False),("name","Medicine Name",200,True),
+               ("qty","Quantity",90,False),("price","Price (₹)",100,False),
+               ("expiry","Expiry Date",120,False),("min_stock","Min Stock",90,False),
+               ("status","Status",120,False)]
+        for col, hd, w, stretch in cfg:
+            self._tree.heading(col, text=hd, command=lambda c=col: self._sort(c))
+            self._tree.column(col, width=w, minwidth=60, stretch=stretch, anchor="center")
+        self._tree.column("name", anchor="w")
+
+        vsb = ttk.Scrollbar(tf, orient="vertical", command=self._tree.yview)
+        hsb = ttk.Scrollbar(tf, orient="horizontal", command=self._tree.xview)
+        self._tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self._tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         self._tree.bind("<Double-1>", lambda e: self._open_edit())
+        self._tree.tag_configure("low",     background="#FFF3E0")
+        self._tree.tag_configure("expired", background="#FFEBEE")
 
-        self._status = tk.Label(self, text="Ready", font=("Arial", 9), bg="#F0F0F0")
-        self._status.pack(anchor="w", padx=15, pady=5)
+        self._status = tk.StringVar(value="Ready")
+        tk.Label(self, textvariable=self._status, font=st.FONTS["small"],
+                 bg=st.COLORS["background"], fg=st.COLORS["text_light"],
+                 anchor="w").grid(row=3, column=0, sticky="ew", padx=20, pady=(0,8))
 
     def refresh(self, data=None):
         for r in self._tree.get_children():
@@ -62,32 +110,41 @@ class InventoryFrame(tk.Frame):
         self._selected_id = None
         self._edit_btn.config(state="disabled")
         self._del_btn.config(state="disabled")
-        today = datetime.now().strftime("%Y-%m-%d")
-        rows = data if data is not None else db.get_all_medicines(self._user_id)
-        sno = 1
+        rows = data if data is not None else db.get_all_medicines()
         for med in rows:
             qty = med["quantity"]
             minst = med["min_stock"]
-            exp = str(med["expiry_date"])
-            if exp <= today:
-                status = "Expired"
-            elif qty <= minst:
-                status = "Low Stock"
+            batches = db.get_batches_for_medicine(med["id"], only_available=True)
+            if not batches or qty <= 0:
+                status, tag = "— Empty", ""
+                exp_disp = med["expiry_date"] or "—"
             else:
-                status = "In Stock"
-            # show S.No. 1,2,3... keep real db id in iid for edit/delete
-            self._tree.insert("", "end", iid=str(med["id"]), values=(
-                sno, med["name"], qty, "₹{:.2f}".format(med["price"]),
-                exp, minst, status))
-            sno = sno + 1
-        self._status.config(text=str(len(rows)) + " medicine(s)")
+                earliest = min(b["expiry_date"] for b in batches)
+                exp_disp = earliest
+                st_label, tag = db.batch_status(earliest)
+                if qty <= minst and tag != "expired":
+                    status, tag = "⚡ Low Stock", "low"
+                else:
+                    status = st_label
+            self._tree.insert(
+                "", "end", iid=str(med["id"]),
+                values=(med["id"], med["name"], qty,
+                        f"₹{med['price']:.2f}", exp_disp, minst, status),
+                tags=(tag,)
+            )
+        self._status.set(f"{len(rows)} medicine(s) found")
 
     def _do_search(self):
-        q = self._search.get().strip()
-        if not q:
-            self.refresh()
-        else:
-            self.refresh(db.search_medicines(self._user_id, q))
+        q = self._search_var.get()
+        self.refresh() if not q else self.refresh(db.search_medicines(q))
+
+    _sort_rev = {}
+    def _sort(self, col):
+        rev  = self._sort_rev.get(col, False)
+        data = [(self._tree.set(c, col), c) for c in self._tree.get_children("")]
+        data.sort(key=lambda t: t[0], reverse=rev)
+        for i, (_, iid) in enumerate(data): self._tree.move(iid, "", i)
+        self._sort_rev[col] = not rev
 
     def _on_select(self, _=None):
         sel = self._tree.selection()
@@ -100,72 +157,40 @@ class InventoryFrame(tk.Frame):
             self._edit_btn.config(state="disabled")
             self._del_btn.config(state="disabled")
 
-    def _auto_alert_if_needed(self):
-        # email if low stock or expired after change
-        if not self._user_email:
-            return
-        ls = db.get_low_stock_medicines(self._user_id)
-        if ls:
-            db.enqueue_alert("low_stock", self._user_email, ls)
-            smtp.send_low_stock_alert(self._user_email, ls)
-        ex = db.get_expired_medicines(self._user_id)
-        if ex:
-            db.enqueue_alert("expired", self._user_email, ex)
-            smtp.send_expired_medicine_alert(self._user_email, ex)
-
     def _open_add(self):
         MedicineDialog(self.winfo_toplevel(), "Add Medicine", self._handle_add)
 
     def _handle_add(self, name, qty, price, expiry, minst):
-        ok, msg = db.add_medicine(self._user_id, name, qty, price, expiry, minst)
+        ok, msg = db.add_medicine(name, qty, price, expiry, minst)
         if ok:
             self.refresh()
-            self._auto_alert_if_needed()
             messagebox.showinfo("Success", msg, parent=self.winfo_toplevel())
         else:
             messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
 
     def _open_edit(self):
-        if not self._selected_id:
-            messagebox.showwarning("Select", "Select a medicine first.",
-                                   parent=self.winfo_toplevel())
-            return
-        med = db.get_medicine_by_id(self._selected_id, self._user_id)
-        if not med:
-            messagebox.showerror("Error", "Medicine not found.",
-                                 parent=self.winfo_toplevel())
-            return
-        mid = self._selected_id
-        MedicineDialog(
-            self.winfo_toplevel(),
-            "Edit Medicine",
-            lambda name, qty, price, expiry, minst: self._handle_edit(
-                mid, name, qty, price, expiry, minst),
-            medicine=med,
-        )
+        if not self._selected_id: return
+        med = db.get_medicine_by_id(self._selected_id)
+        if not med: return
+        MedicineDialog(self.winfo_toplevel(), "Edit Medicine",
+                       lambda *a: self._handle_edit(self._selected_id, *a),
+                       medicine=med)
 
     def _handle_edit(self, mid, name, qty, price, expiry, minst):
-        ok, msg = db.update_medicine(self._user_id, mid, name, qty, price, expiry, minst)
+        ok, msg = db.update_medicine(mid, name, qty, price, expiry, minst)
         if ok:
             self.refresh()
-            self._auto_alert_if_needed()
             messagebox.showinfo("Success", msg, parent=self.winfo_toplevel())
         else:
             messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
 
     def _do_delete(self):
-        if not self._selected_id:
-            messagebox.showwarning("Select", "Select a medicine first.",
-                                   parent=self.winfo_toplevel())
-            return
-        med = db.get_medicine_by_id(self._selected_id, self._user_id)
-        if not med:
-            return
-        if messagebox.askyesno(
-                "Delete",
-                "Delete '" + med["name"] + "'?\nThis cannot be undone.",
-                parent=self.winfo_toplevel()):
-            ok, msg = db.delete_medicine(self._user_id, self._selected_id)
+        if not self._selected_id: return
+        med = db.get_medicine_by_id(self._selected_id)
+        if med and messagebox.askyesno("Delete",
+            f"Delete '{med['name']}'? This cannot be undone.",
+            parent=self.winfo_toplevel()):
+            ok, msg = db.delete_medicine(self._selected_id)
             if ok:
                 self.refresh()
                 messagebox.showinfo("Deleted", msg, parent=self.winfo_toplevel())
@@ -173,247 +198,101 @@ class InventoryFrame(tk.Frame):
                 messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
 
     def _alert_low(self):
-        meds = db.get_low_stock_medicines(self._user_id)
+        meds = db.get_low_stock_medicines()
         if not meds:
             messagebox.showinfo("Low Stock", "No medicines are low on stock.",
-                                parent=self.winfo_toplevel())
-            return
+                                parent=self.winfo_toplevel()); return
         if not self._user_email:
-            messagebox.showwarning("No Email", "No email configured for alerts.",
-                                   parent=self.winfo_toplevel())
-            return
-        smtp.send_low_stock_alert(
-            self._user_email, meds,
-            callback=lambda ok, m: self.after(
-                0,
-                lambda: messagebox.showinfo(
-                    "Alert",
-                    "Low stock alert sent!" if ok else "Failed: " + str(m),
-                    parent=self.winfo_toplevel(),
-                ),
-            ),
-        )
+            messagebox.showwarning("No Email", "No email configured.",
+                                   parent=self.winfo_toplevel()); return
+        smtp.send_low_stock_alert(self._user_email, meds,
+            callback=lambda ok, m: self.after(0, lambda: messagebox.showinfo(
+                "Alert", "Low stock alert sent!" if ok else f"Failed: {m}",
+                parent=self.winfo_toplevel())))
 
     def _alert_expired(self):
-        meds = db.get_expired_medicines(self._user_id)
+        meds = db.get_expired_medicines()
         if not meds:
-            messagebox.showinfo("Expiry", "No expired medicines.",
-                                parent=self.winfo_toplevel())
-            return
+            messagebox.showinfo("Expiry", "No medicines have expired.",
+                                parent=self.winfo_toplevel()); return
         if not self._user_email:
-            messagebox.showwarning("No Email", "No email configured for alerts.",
-                                   parent=self.winfo_toplevel())
-            return
-        smtp.send_expired_medicine_alert(
-            self._user_email, meds,
-            callback=lambda ok, m: self.after(
-                0,
-                lambda: messagebox.showinfo(
-                    "Alert",
-                    "Expiry alert sent!" if ok else "Failed: " + str(m),
-                    parent=self.winfo_toplevel(),
-                ),
-            ),
-        )
+            messagebox.showwarning("No Email", "No email configured.",
+                                   parent=self.winfo_toplevel()); return
+        smtp.send_expired_medicine_alert(self._user_email, meds,
+            callback=lambda ok, m: self.after(0, lambda: messagebox.showinfo(
+                "Alert", "Expiry alert sent!" if ok else f"Failed: {m}",
+                parent=self.winfo_toplevel())))
 
 
 class MedicineDialog(tk.Toplevel):
     def __init__(self, parent, title, on_save, medicine=None):
         super().__init__(parent)
-        self.title(title)
+        self.title(f"PharmaCare – {title}")
         self.resizable(False, False)
         self.grab_set()
-        self.on_save = on_save
-        self.saved = False
-        self.geometry("400x560")
-        # load medicine names from catalog table
-        catalog = db.get_medicine_catalog()
-        self.catalog_names = []
-        if catalog:
-            for r in catalog:
-                self.catalog_names.append(r["name"])
-        self.build(title)
-        if medicine:
-            self.populate(medicine)
+        self.configure(bg=st.COLORS["white"])
+        self._on_save = on_save
+        self._build_ui(title)
+        self._center(440, 490)
+        if medicine: self._populate(medicine)
 
-    def build(self, title):
-        tk.Label(self, text=title, font=("Arial", 13, "bold")).pack(pady=10)
+    def _center(self, w, h):
+        self.update_idletasks()
+        x = (self.winfo_screenwidth()  - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
-        f = tk.Frame(self)
-        f.pack(padx=25, fill="x")
+    def _field(self, parent, label):
+        f = tk.Frame(parent, bg=st.COLORS["white"])
+        f.pack(fill="x", padx=30, pady=(0,12))
+        tk.Label(f, text=label, font=st.FONTS["body_bold"],
+                 bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
+        var = tk.StringVar()
+        tk.Entry(f, textvariable=var, **st.ENTRY).pack(fill="x", ipady=7, pady=(4,0))
+        return var
 
-        # medicine name
-        tk.Label(f, text="Medicine Name * (type to search)",
-                 font=("Arial", 10)).pack(anchor="w")
-        self.name_entry = tk.Entry(f, width=34)
-        self.name_entry.pack(pady=(0, 2), fill="x")
-        self.name_entry.bind("<KeyRelease>", self.show_suggestions)
-        self.name_entry.bind("<Down>", self.focus_list)
-        self.name_entry.bind("<Escape>", self.hide_suggestions)
+    def _build_ui(self, title):
+        hdr = tk.Frame(self, bg=st.COLORS["primary"])
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=f"💊  {title}", font=st.FONTS["subheading"],
+                 bg=st.COLORS["primary"], fg=st.COLORS["white"]).pack(pady=14)
+        body = tk.Frame(self, bg=st.COLORS["white"])
+        body.pack(fill="both", expand=True, pady=14)
+        self._name  = self._field(body, "Medicine Name *")
+        self._qty   = self._field(body, "Quantity *")
+        self._price = self._field(body, "Unit Price (₹) *")
+        self._exp   = self._field(body, "Expiry Date (YYYY-MM-DD) *")
+        self._minst = self._field(body, "Minimum Stock Level *")
+        self._msg   = tk.StringVar()
+        tk.Label(body, textvariable=self._msg, font=st.FONTS["small"],
+                 bg=st.COLORS["white"], fg=st.COLORS["danger"],
+                 wraplength=380).pack(padx=30, pady=(0,6))
+        br = tk.Frame(body, bg=st.COLORS["white"])
+        br.pack(padx=30, fill="x")
+        tk.Button(br, text="Cancel", command=self.destroy,
+                  **st.BUTTON["secondary"]).pack(side="left")
+        sb = tk.Button(br, text="Save", command=self._save,
+                       **st.BUTTON["primary"])
+        sb.pack(side="right")
+        st.add_hover(sb, st.COLORS["primary"], st.COLORS["primary_dark"])
 
-        # suggestion list (shown under name when typing)
-        self.list_frame = tk.Frame(f)
-        self.suggest_list = tk.Listbox(self.list_frame, height=4, width=34,
-                                       font=("Arial", 10), activestyle="dotbox")
-        self.suggest_list.pack(side="left", fill="x", expand=True)
-        sb = tk.Scrollbar(self.list_frame, orient="vertical",
-                          command=self.suggest_list.yview)
-        sb.pack(side="right", fill="y")
-        self.suggest_list.config(yscrollcommand=sb.set)
-        self.suggest_list.bind("<<ListboxSelect>>", self.pick_suggestion)
-        self.suggest_list.bind("<Return>", self.pick_suggestion)
+    def _populate(self, m):
+        self._name.set(m["name"]); self._qty.set(str(m["quantity"]))
+        self._price.set(str(m["price"])); self._exp.set(m["expiry_date"])
+        self._minst.set(str(m["min_stock"]))
 
-        # quantity
-        tk.Label(f, text="Quantity * (whole number)",
-                 font=("Arial", 10)).pack(anchor="w", pady=(8, 0))
-        self.qty_entry = tk.Entry(f, width=34)
-        self.qty_entry.pack(pady=(0, 4), fill="x")
-
-        # price
-        tk.Label(f, text="Unit Price (₹) *",
-                 font=("Arial", 10)).pack(anchor="w")
-        self.price_entry = tk.Entry(f, width=34)
-        self.price_entry.pack(pady=(0, 4), fill="x")
-
-        # expiry
-        tk.Label(f, text="Expiry Date (YYYY-MM-DD) *",
-                 font=("Arial", 10)).pack(anchor="w")
-        self.exp_entry = tk.Entry(f, width=34)
-        self.exp_entry.pack(pady=(0, 4), fill="x")
-
-        # minimum stock
-        tk.Label(f, text="Minimum Stock * (whole number)",
-                 font=("Arial", 10)).pack(anchor="w")
-        self.min_entry = tk.Entry(f, width=34)
-        self.min_entry.pack(pady=(0, 4), fill="x")
-
-        self.msg = tk.Label(self, text="", fg="red", font=("Arial", 9), wraplength=340)
-        self.msg.pack(pady=4)
-
-        row = tk.Frame(self)
-        row.pack(pady=8)
-        tk.Button(row, text="Cancel", width=10, command=self.destroy).pack(side="left", padx=5)
-        self.save_btn = tk.Button(row, text="Save", width=10, command=self.save)
-        self.save_btn.pack(side="left", padx=5)
-
-    def show_suggestions(self, event=None):
-        # show matching names while typing
-        typed = self.name_entry.get().strip().lower()
-        self.suggest_list.delete(0, tk.END)
-        if typed == "":
-            self.list_frame.pack_forget()
-            return
-        matches = []
-        for name in self.catalog_names:
-            if typed in name.lower():
-                matches.append(name)
-        if len(matches) == 0:
-            self.list_frame.pack_forget()
-            return
-        for name in matches[:15]:
-            self.suggest_list.insert(tk.END, name)
-        self.list_frame.pack(fill="x", after=self.name_entry)
-
-    def hide_suggestions(self, event=None):
-        self.list_frame.pack_forget()
-
-    def focus_list(self, event=None):
-        if self.suggest_list.size() > 0:
-            self.suggest_list.focus_set()
-            self.suggest_list.selection_set(0)
-        return "break"
-
-    def pick_suggestion(self, event=None):
-        sel = self.suggest_list.curselection()
-        if not sel:
-            return
-        name = self.suggest_list.get(sel[0])
-        self.name_entry.delete(0, tk.END)
-        self.name_entry.insert(0, name)
-        self.list_frame.pack_forget()
-        self.name_entry.focus_set()
-
-    def populate(self, m):
-        self.name_entry.insert(0, m["name"])
-        self.qty_entry.insert(0, str(m["quantity"]))
-        self.price_entry.insert(0, str(m["price"]))
-        self.exp_entry.insert(0, str(m["expiry_date"]))
-        self.min_entry.insert(0, str(m["min_stock"]))
-
-    def save(self):
-        if self.saved:
-            return
-
-        self.msg.config(text="")
-        name = self.name_entry.get().strip()
-        qty_s = self.qty_entry.get().strip()
-        price_s = self.price_entry.get().strip()
-        exp = self.exp_entry.get().strip()
-        minst_s = self.min_entry.get().strip()
-
-        if name == "":
-            self.msg.config(text="Medicine name is required.")
-            return
-        if len(name) < 2:
-            self.msg.config(text="Medicine name must be at least 2 characters.")
-            return
-        if qty_s == "":
-            self.msg.config(text="Quantity is required.")
-            return
-        if price_s == "":
-            self.msg.config(text="Price is required.")
-            return
-        if exp == "":
-            self.msg.config(text="Expiry date is required.")
-            return
-        if minst_s == "":
-            self.msg.config(text="Minimum stock is required.")
-            return
-
+    def _save(self):
         try:
-            qty = int(qty_s)
-        except ValueError:
-            self.msg.config(text="Quantity must be a whole number (e.g. 50).")
-            return
-        if qty <= 0:
-            self.msg.config(text="Quantity must be greater than 0.")
-            return
-        if qty > 1000000:
-            self.msg.config(text="Quantity is too large.")
-            return
-
-        try:
-            price = float(price_s)
-        except ValueError:
-            self.msg.config(text="Price must be a number (e.g. 25.50).")
-            return
-        if price <= 0:
-            self.msg.config(text="Price must be greater than 0.")
-            return
-        if price > 1000000:
-            self.msg.config(text="Price is too large.")
-            return
-
-        try:
-            exp_date = datetime.strptime(exp, "%Y-%m-%d")
-        except ValueError:
-            self.msg.config(text="Expiry date must be YYYY-MM-DD (e.g. 2027-06-30).")
-            return
-
-        if exp_date.date() < datetime.now().date():
-            self.msg.config(text="Expiry date cannot be in the past.")
-            return
-
-        try:
-            minst = int(minst_s)
-        except ValueError:
-            self.msg.config(text="Minimum stock must be a whole number.")
-            return
-        if minst <= 0:
-            self.msg.config(text="Minimum stock must be greater than 0.")
-            return
-
-        self.saved = True
-        self.save_btn.config(state="disabled")
-        self.on_save(name, qty, price, exp, minst)
+            name  = self._name.get().strip()
+            qty   = int(self._qty.get().strip())
+            price = float(self._price.get().strip())
+            exp   = self._exp.get().strip()
+            minst = int(self._minst.get().strip())
+            if not name: raise ValueError("Name required")
+            if qty < 0 or price < 0 or minst < 0: raise ValueError("Values must be ≥ 0")
+            datetime.strptime(exp, "%Y-%m-%d")
+        except ValueError as e:
+            self._msg.set(str(e) if str(e) != "unconverted data remains" else
+                          "Date must be YYYY-MM-DD"); return
+        self._on_save(name, qty, price, exp, minst)
         self.destroy()

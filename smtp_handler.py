@@ -1,167 +1,262 @@
-# smtp_handler.py - Email & OTP (edit SMTP_CONFIG before using email features)
-
-import smtplib
-import random
-import string
-import threading
+import smtplib, random, string, threading
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ── Edit these two values ────────────────────────────────────────────────────
+# ── Edit these two lines ──────────────────────────────────────────────────────
 SMTP_CONFIG = {
-    "email":    "shlok.vyadav2508@gmail.com",       # Your Gmail address
-    "password": "tola tpno ydtj eknj",     # 16-char Gmail App Password
-    "server":   "smtp.gmail.com",
-    "port":     587,
+    "email":       "shlok.vyadav2508@gmail.com",    # Your Gmail address
+    "password":    "your_app_password_here",  # 16-char Gmail App Password
+    "smtp_server": "crfa mogy oegk hggs",
+    "smtp_port":   587,
 }
 
-_otp_store = {}  # {email: {"otp": str, "expires": datetime}}
+# In-memory OTP store: { email: {"otp": str, "expires": datetime} }
+_otp_store = {}
 
 
-def generate_otp(length=6):
-    return "".join(random.choices(string.digits, k=length))
+# ── OTP Helpers ───────────────────────────────────────────────────────────────
 
-
-def store_otp(email, otp, minutes=10):
+def store_otp(email, otp, expiry_minutes=10):
+    """Save OTP with expiry time."""
     _otp_store[email.lower()] = {
-        "otp": otp,
-        "expires": datetime.now() + timedelta(minutes=minutes)
+        "otp":     otp,
+        "expires": datetime.now() + timedelta(minutes=expiry_minutes)
     }
 
 
 def verify_otp(email, otp):
+    """
+    Verify OTP for the given email.
+    Returns (success: bool, message: str).
+    """
     key = email.lower()
     if key not in _otp_store:
-        return False, "No OTP found. Request a new one."
-    rec = _otp_store[key]
-    if datetime.now() > rec["expires"]:
+        return False, "No OTP found. Please request a new one."
+    record = _otp_store[key]
+    if datetime.now() > record["expires"]:
         del _otp_store[key]
-        return False, "OTP expired. Request a new one."
-    if rec["otp"] != otp.strip():
-        return False, "Invalid OTP."
+        return False, "OTP has expired. Please request a new one."
+    if record["otp"] != otp.strip():
+        return False, "Invalid OTP. Please try again."
     del _otp_store[key]
-    return True, "OTP verified."
+    return True, "OTP verified successfully."
 
 
-def _send_raw(to, subject, html):
+def clear_otp(email):
+    """Remove a stored OTP manually."""
+    _otp_store.pop(email.lower(), None)
+
+
+def _send_raw(to_email, subject, html_body):
+    """Send one HTML email. Returns (success, message)."""
     try:
         msg = MIMEMultipart("alternative")
-        msg["From"] = SMTP_CONFIG["email"]
-        msg["To"] = to
+        msg["From"]    = SMTP_CONFIG["email"]
+        msg["To"]      = to_email
         msg["Subject"] = subject
-        msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP(SMTP_CONFIG["server"], SMTP_CONFIG["port"]) as s:
-            s.ehlo()
-            s.starttls()
-            s.login(SMTP_CONFIG["email"], SMTP_CONFIG["password"])
-            s.send_message(msg)
-        return True, "Email sent."
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP(SMTP_CONFIG["smtp_server"], SMTP_CONFIG["smtp_port"]) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(SMTP_CONFIG["email"], SMTP_CONFIG["password"])
+            server.send_message(msg)
+
+        return True, "Email sent successfully."
     except smtplib.SMTPAuthenticationError:
-        return False, "SMTP auth failed. Check credentials in smtp_handler.py."
+        return False, "SMTP auth failed. Check your email/password in smtp_handler.py."
+    except smtplib.SMTPConnectError:
+        return False, "Cannot connect to SMTP server. Check your internet."
+    except smtplib.SMTPException as e:
+        return False, f"SMTP error: {e}"
     except Exception as e:
-        return False, str(e)
+        return False, f"Failed to send email: {e}"
 
 
-def send_email_async(to, subject, html, callback=None):
-    def worker():
-        ok, msg = _send_raw(to, subject, html)
+# ── Core Email Sender ─────────────────────────────────────────────────────────
+
+def send_email_async(to_email, subject, html_body, callback=None):
+    """Send email in a background thread so the UI doesn't freeze."""
+    def _worker():
+        ok, msg = _send_raw(to_email, subject, html_body)
         if callback:
             callback(ok, msg)
-    threading.Thread(target=worker, daemon=True).start()
+    threading.Thread(target=_worker, daemon=True).start()
 
 
-def _wrap(body):
-    return f"""<!DOCTYPE html><html><body style="font-family:Calibri,Arial,sans-serif;background:#E8F5E9;margin:0;padding:20px;">
-    <div style="max-width:520px;margin:auto;background:#fff;border-radius:8px;overflow:hidden;">
-      <div style="background:#1B5E20;padding:16px;text-align:center;">
-        <h2 style="color:#fff;margin:0;">PharmaCare</h2>
+def _wrap(content):
+    """Wrap email content in the PharmaCare branded HTML layout."""
+    return f"""<!DOCTYPE html>
+    <html>
+    <body style="margin:0;padding:0;background:#E8F5E9;
+                 font-family:Calibri,Arial,sans-serif;">
+      <div style="max-width:580px;margin:30px auto;border-radius:10px;
+                  overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.12);">
+
+        <!-- Header -->
+        <div style="background:#1B5E20;padding:20px 0 10px;text-align:center;">
+          <h1 style="color:#fff;margin:0;font-size:28px;letter-spacing:2px;">
+            &#128138; PharmaCare
+          </h1>
+          <p style="color:#A5D6A7;margin:4px 0 0;font-size:12px;">
+            Professional Pharmacy Management System
+          </p>
+        </div>
+
+        <!-- Body -->
+        <div style="background:#ffffff;padding:32px 36px;">
+          {content}
+        </div>
+
+        <!-- Footer -->
+        <div style="background:#F1F8E9;padding:16px;text-align:center;">
+          <p style="color:#9E9E9E;font-size:11px;margin:0;">
+            &copy; PharmaCare &nbsp;|&nbsp;
+            This is an automated message – please do not reply.
+          </p>
+        </div>
+
       </div>
-      <div style="padding:24px;">{body}</div>
-      <div style="background:#F1F8E9;padding:10px;text-align:center;font-size:11px;color:#999;">
-        Automated message – do not reply.
-      </div>
-    </div></body></html>"""
+    </body>
+    </html>"""
 
+
+# ── Email Template Wrapper ────────────────────────────────────────────────────
 
 def send_otp_email(to_email, purpose="verification", callback=None):
+    """Generate, store, and send an OTP email. Returns the OTP string."""
     otp = generate_otp()
     store_otp(to_email, otp)
-    body = f"""
-      <h3 style="color:#2E7D32;">OTP for {purpose.title()}</h3>
-      <p>Your One-Time Password:</p>
-      <p style="font-size:32px;font-weight:bold;color:#2E7D32;letter-spacing:6px;text-align:center;">{otp}</p>
-      <p style="color:#757575;font-size:13px;">Valid for 10 minutes. Do not share.</p>"""
-    send_email_async(to_email, f"PharmaCare – OTP for {purpose.title()}", _wrap(body), callback)
+
+    content = f"""
+      <h2 style="color:#2E7D32;margin-top:0;">OTP {purpose.title()}</h2>
+      <p style="color:#424242;">
+        Your One-Time Password for <strong>{purpose}</strong> is:
+      </p>
+      <div style="text-align:center;background:#E8F5E9;border-radius:8px;
+                  padding:24px;margin:20px 0;">
+        <span style="font-size:40px;font-weight:bold;color:#2E7D32;
+                     letter-spacing:10px;font-family:Courier New,monospace;">
+          {otp}
+        </span>
+      </div>
+      <p style="color:#757575;font-size:13px;">
+        Valid for <strong>10 minutes</strong>.
+        Do not share this OTP with anyone.
+      </p>
+    """
+    send_email_async(
+        to_email,
+        f"PharmaCare – OTP for {purpose.title()}",
+        _wrap(content),
+        callback
+    )
     return otp
 
 
+# ── Public Email Functions ────────────────────────────────────────────────────
+
 def send_low_stock_alert(to_email, medicines, callback=None):
+    """Send a low-stock alert email listing all affected medicines."""
     rows = "".join(
-        f"<tr><td style='padding:8px;'>{dict(m)['name']}</td>"
-        f"<td style='padding:8px;color:#E65100;font-weight:bold;'>{dict(m)['quantity']}</td>"
-        f"<td style='padding:8px;'>{dict(m)['min_stock']}</td></tr>"
-        for m in medicines)
-    body = f"""
-      <h3 style="color:#E65100;">Low Stock Alert</h3>
-      <p>These medicines are at or below minimum stock:</p>
-      <table style="width:100%;border-collapse:collapse;">
-        <tr style="background:#E65100;color:#fff;"><th style="padding:8px;text-align:left;">Medicine</th>
-          <th style="padding:8px;">Current</th><th style="padding:8px;">Min</th></tr>
-        {rows}
-      </table>"""
-    send_email_async(to_email, "PharmaCare – Low Stock Alert", _wrap(body), callback)
+        f"""<tr style="background:{'#F9FBF9' if i % 2 == 0 else '#ffffff'};">
+              <td style="padding:10px 14px;">{dict(m)['name']}</td>
+              <td style="padding:10px 14px;color:#E65100;font-weight:bold;">
+                {dict(m)['quantity']}
+              </td>
+              <td style="padding:10px 14px;">{dict(m)['min_stock']}</td>
+            </tr>"""
+        for i, m in enumerate(medicines)
+    )
+    content = f"""
+      <h2 style="color:#E65100;margin-top:0;">&#9888; Low Stock Alert</h2>
+      <p style="color:#424242;">
+        The following medicines are at or below their minimum stock level.
+        Please reorder immediately.
+      </p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+        <thead>
+          <tr style="background:#E65100;color:#ffffff;">
+            <th style="padding:12px 14px;text-align:left;">Medicine</th>
+            <th style="padding:12px 14px;text-align:left;">Current Stock</th>
+            <th style="padding:12px 14px;text-align:left;">Min Stock</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    """
+    send_email_async(
+        to_email,
+        "PharmaCare – Low Stock Alert",
+        _wrap(content),
+        callback
+    )
 
 
 def send_expired_medicine_alert(to_email, medicines, callback=None):
+    """Send an expired-medicine alert email."""
     rows = "".join(
-        f"<tr><td style='padding:8px;'>{dict(m)['name']}</td>"
-        f"<td style='padding:8px;color:#C62828;font-weight:bold;'>{dict(m)['expiry_date']}</td>"
-        f"<td style='padding:8px;'>{dict(m)['quantity']}</td></tr>"
-        for m in medicines)
-    body = f"""
-      <h3 style="color:#C62828;">Expired Medicine Alert</h3>
-      <p>These medicines have expired:</p>
-      <table style="width:100%;border-collapse:collapse;">
-        <tr style="background:#C62828;color:#fff;"><th style="padding:8px;text-align:left;">Medicine</th>
-          <th style="padding:8px;">Expiry</th><th style="padding:8px;">Stock</th></tr>
-        {rows}
-      </table>"""
-    send_email_async(to_email, "PharmaCare – Expired Medicine Alert", _wrap(body), callback)
+        f"""<tr style="background:{'#F9FBF9' if i % 2 == 0 else '#ffffff'};">
+              <td style="padding:10px 14px;">{dict(m)['name']}</td>
+              <td style="padding:10px 14px;color:#C62828;font-weight:bold;">
+                {dict(m)['expiry_date']}
+              </td>
+              <td style="padding:10px 14px;">{dict(m)['quantity']}</td>
+            </tr>"""
+        for i, m in enumerate(medicines)
+    )
+    content = f"""
+      <h2 style="color:#C62828;margin-top:0;">&#128680; Expired Medicine Alert</h2>
+      <p style="color:#424242;">
+        The following medicines have <strong>expired</strong> and must be
+        removed from inventory immediately.
+      </p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+        <thead>
+          <tr style="background:#C62828;color:#ffffff;">
+            <th style="padding:12px 14px;text-align:left;">Medicine</th>
+            <th style="padding:12px 14px;text-align:left;">Expiry Date</th>
+            <th style="padding:12px 14px;text-align:left;">Stock</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    """
+    send_email_async(
+        to_email,
+        "PharmaCare – Expired Medicine Alert",
+        _wrap(content),
+        callback
+    )
 
 
 def send_welcome_email(to_email, username, callback=None):
-    body = f"""
-      <h3 style="color:#2E7D32;">Welcome, {username}!</h3>
-      <p>Your PharmaCare account is ready. You can now manage inventory, billing, and reports.</p>"""
-    send_email_async(to_email, "Welcome to PharmaCare!", _wrap(body), callback)
+    """Send a welcome email after successful account creation."""
+    content = f"""
+      <h2 style="color:#2E7D32;margin-top:0;">Welcome to PharmaCare, {username}!</h2>
+      <p style="color:#424242;">
+        Your account has been created successfully.
+        You can now log in and start managing your pharmacy.
+      </p>
+      <ul style="color:#424242;line-height:1.8;">
+        <li>Track medicines and stock levels in real time</li>
+        <li>Generate professional bills with receipts</li>
+        <li>View detailed sales and inventory reports</li>
+        <li>Get automatic low-stock &amp; expiry alerts by email</li>
+      </ul>
+      <p style="color:#757575;font-size:13px;margin-top:20px;">
+        If you did not create this account, please contact support.
+      </p>
+    """
+    send_email_async(
+        to_email,
+        "Welcome to PharmaCare!",
+        _wrap(content),
+        callback
+    )
 
 
-def send_bill_email(to_email, bill_no, customer, items, sub, disc, total, callback=None):
-    """Email bill receipt to the logged-in pharmacy user."""
-    rows = "".join(
-        f"<tr><td style='padding:8px;'>{item['name']}</td>"
-        f"<td style='padding:8px;text-align:center;'>{item['qty']}</td>"
-        f"<td style='padding:8px;text-align:right;'>&#8377;{item['price']:.2f}</td>"
-        f"<td style='padding:8px;text-align:right;'>&#8377;{item['total']:.2f}</td></tr>"
-        for item in items)
-    body = f"""
-      <h3 style="color:#2E7D32;">Bill Receipt</h3>
-      <p><strong>Bill No:</strong> {bill_no}<br>
-         <strong>Customer:</strong> {customer}<br>
-         <strong>Date:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
-      <table style="width:100%;border-collapse:collapse;">
-        <tr style="background:#2E7D32;color:#fff;">
-          <th style="padding:8px;text-align:left;">Medicine</th>
-          <th style="padding:8px;">Qty</th>
-          <th style="padding:8px;">Price</th>
-          <th style="padding:8px;">Total</th>
-        </tr>
-        {rows}
-      </table>
-      <p style="text-align:right;margin-top:12px;">
-        Subtotal: &#8377;{sub:.2f}<br>
-        Discount: &#8377;{disc:.2f}<br>
-        <strong style="font-size:16px;">TOTAL: &#8377;{total:.2f}</strong>
-      </p>"""
-    send_email_async(to_email, f"PharmaCare – Bill {bill_no}", _wrap(body), callback)
+def generate_otp(length=6):
+    """Generate a random 6-digit OTP."""
+    return "".join(random.choices(string.digits, k=length))

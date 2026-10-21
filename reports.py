@@ -1,68 +1,112 @@
-# reports.py - basic reports
-# UI kept. Extra: bar chart canvas + selection_sort on column header click.
-
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
-import csv
 import database as db
+import styles as st
 
 
 class ReportsFrame(tk.Frame):
-    def __init__(self, parent, user_id=None):
-        super().__init__(parent, bg="#F0F0F0")
-        self._user_id = user_id
+    TABS = [("Sales","sales"), ("Stock","stock"),
+            ("Low Stock","low_stock"), ("Expired","expired"),
+            ("Purchases","purchases"), ("Batches","batches"),
+            ("Financial","financial"), ("Vendor Hist.","vendor_hist")]
+
+    def __init__(self, parent):
+        super().__init__(parent, bg=st.COLORS["background"])
         self._current = "sales"
-        self._sort_rev = {}
-        self._build()
+        self._build_ui()
         self._load("sales")
 
-    def _build(self):
-        top = tk.Frame(self, bg="#F0F0F0")
-        top.pack(fill="x", padx=15, pady=10)
-        tk.Label(top, text="Reports", font=("Arial", 16, "bold"), bg="#F0F0F0").pack(side="left")
-        tk.Button(top, text="Export CSV", command=self._export).pack(side="right")
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(3, weight=1)
 
-        tabs = tk.Frame(self, bg="#F0F0F0")
-        tabs.pack(fill="x", padx=15)
-        for label, key in [("Sales", "sales"), ("Stock", "stock"),
-                           ("Low Stock", "low_stock"), ("Expired", "expired")]:
-            tk.Button(tabs, text=label, command=lambda k=key: self._switch(k)).pack(side="left", padx=2)
+        # Title
+        top = tk.Frame(self, bg=st.COLORS["background"])
+        top.grid(row=0, column=0, sticky="ew", padx=20, pady=(16,8))
+        tk.Label(top, text="Reports & Analytics", font=st.FONTS["heading"],
+                 bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).pack(side="left")
+        tk.Button(top, text="📥 Export CSV", command=self._export,
+                  **st.BUTTON["secondary"]).pack(side="right")
 
-        self._filter = tk.Frame(self, bg="#F0F0F0")
-        self._filter.pack(fill="x", padx=15, pady=5)
-        tk.Label(self._filter, text="From:", bg="#F0F0F0").pack(side="left")
-        self._from = tk.Entry(self._filter, width=12)
-        self._from.insert(0, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"))
-        self._from.pack(side="left", padx=3)
-        tk.Label(self._filter, text="To:", bg="#F0F0F0").pack(side="left")
-        self._to = tk.Entry(self._filter, width=12)
-        self._to.insert(0, datetime.now().strftime("%Y-%m-%d"))
-        self._to.pack(side="left", padx=3)
-        tk.Button(self._filter, text="Run", command=lambda: self._load("sales")).pack(side="left", padx=5)
+        # Tab selector
+        tabs = tk.Frame(self, bg=st.COLORS["white"],
+                        highlightbackground=st.COLORS["border"], highlightthickness=1)
+        tabs.grid(row=1, column=0, sticky="ew", padx=20, pady=(0,8))
+        self._tab_btns = {}
+        for label, key in self.TABS:
+            b = tk.Button(tabs, text=label, font=st.FONTS["body_bold"],
+                          relief="flat", cursor="hand2", padx=18, pady=10, bd=0,
+                          command=lambda k=key: self._switch(k))
+            b.pack(side="left")
+            self._tab_btns[key] = b
+        self._highlight("sales")
 
-        tf = tk.Frame(self)
-        tf.pack(fill="both", expand=True, padx=15, pady=5)
-        self._tree = ttk.Treeview(tf, show="headings")
-        sb = ttk.Scrollbar(tf, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=sb.set)
-        self._tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
+        # Date filter (sales only)
+        self._filter = tk.Frame(self, bg=st.COLORS["background"])
+        self._filter.grid(row=2, column=0, sticky="ew", padx=20, pady=(0,6))
+        self._filter.columnconfigure(4, weight=1)
+        tk.Label(self._filter, text="From:", font=st.FONTS["body_bold"],
+                 bg=st.COLORS["background"], fg=st.COLORS["text_medium"]
+                 ).grid(row=0, column=0, padx=(0,6))
+        self._from = tk.StringVar(value=(datetime.now()-timedelta(days=30)).strftime("%Y-%m-%d"))
+        tk.Entry(self._filter, textvariable=self._from, width=13, **st.ENTRY
+                 ).grid(row=0, column=1, ipady=5, padx=(0,12))
+        tk.Label(self._filter, text="To:", font=st.FONTS["body_bold"],
+                 bg=st.COLORS["background"], fg=st.COLORS["text_medium"]
+                 ).grid(row=0, column=2, padx=(0,6))
+        self._to = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        tk.Entry(self._filter, textvariable=self._to, width=13, **st.ENTRY
+                 ).grid(row=0, column=3, ipady=5, padx=(0,12))
+        rb = tk.Button(self._filter, text="🔍 Run",
+                       command=lambda: self._load(self._current), **st.BUTTON["sm_primary"])
+        rb.grid(row=0, column=4, padx=(0,8))
+        st.add_hover(rb, st.COLORS["primary"], st.COLORS["primary_dark"])
+        for label, days in [("Today",0),("7 Days",7),("30 Days",30)]:
+            b = tk.Button(self._filter, text=label, font=st.FONTS["small"],
+                          bg=st.COLORS["light_green"], fg=st.COLORS["primary"],
+                          relief="flat", cursor="hand2", padx=8, pady=4, bd=0,
+                          command=lambda d=days: self._quick(d))
+            b.grid(row=0, column=5+[0,7,30].index(days), padx=4)
+            st.add_hover(b, st.COLORS["light_green"], st.COLORS["secondary"])
 
-        self._summary = tk.Label(self, text="", font=("Arial", 10, "bold"), bg="#F0F0F0")
-        self._summary.pack(anchor="w", padx=15, pady=4)
+        # Treeview
+        tf = tk.Frame(self, bg=st.COLORS["white"],
+                      highlightbackground=st.COLORS["border"], highlightthickness=1)
+        tf.grid(row=3, column=0, sticky="nsew", padx=20, pady=(0,8))
+        tf.columnconfigure(0, weight=1); tf.rowconfigure(0, weight=1)
 
-        # Simple visual chart (extra – does not replace existing UI)
-        self._chart = tk.Canvas(self, height=120, bg="white", highlightthickness=1,
-                                highlightbackground="#CCCCCC")
-        self._chart.pack(fill="x", padx=15, pady=(0, 10))
+        sty = ttk.Style()
+        st.apply_treeview_style(sty, "Rep.Treeview")
+        self._tree = ttk.Treeview(tf, show="headings",
+                                   style="Rep.Treeview", selectmode="browse")
+        vsb = ttk.Scrollbar(tf, orient="vertical", command=self._tree.yview)
+        hsb = ttk.Scrollbar(tf, orient="horizontal", command=self._tree.xview)
+        self._tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        self._tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        self._tree.tag_configure("low",     background="#FFF3E0")
+        self._tree.tag_configure("expired", background="#FFEBEE")
+        self._tree.tag_configure("alt",     background=st.COLORS["row_even"])
+
+        self._summary = tk.StringVar()
+        tk.Label(self, textvariable=self._summary, font=st.FONTS["body_bold"],
+                 bg=st.COLORS["background"], fg=st.COLORS["primary"], anchor="w"
+                 ).grid(row=4, column=0, sticky="ew", padx=20, pady=(0,12))
+
+    def _highlight(self, key):
+        for k, b in self._tab_btns.items():
+            b.config(bg=st.COLORS["primary"] if k==key else st.COLORS["white"],
+                     fg=st.COLORS["white"]   if k==key else st.COLORS["text_medium"])
 
     def _switch(self, key):
         self._current = key
-        if key == "sales":
-            self._filter.pack(fill="x", padx=15, pady=5)
+        self._highlight(key)
+        if key in ("sales", "purchases", "financial", "vendor_hist"):
+            self._filter.grid()
         else:
-            self._filter.pack_forget()
+            self._filter.grid_remove()
         self._load(key)
 
     def refresh(self):
@@ -70,159 +114,193 @@ class ReportsFrame(tk.Frame):
 
     def _set_cols(self, cols):
         self._tree["columns"] = [c[0] for c in cols]
-        for col, hd, w in cols:
+        for col, hd, w, anchor in cols:
             self._tree.heading(col, text=hd,
-                               command=lambda c=col: self._sort_column(c))
-            self._tree.column(col, width=w)
+                               command=lambda c=col: self._sort(c))
+            self._tree.column(col, width=w, minwidth=50,
+                              anchor=anchor, stretch=(col==cols[1][0]))
 
     def _clear(self):
-        for r in self._tree.get_children():
-            self._tree.delete(r)
+        for r in self._tree.get_children(): self._tree.delete(r)
 
     def _load(self, key):
         self._clear()
         getattr(self, f"_rep_{key}")()
 
-    def _sort_column(self, col):
-        """Criterion D – selection_sort on clicked column."""
-        rows = []
-        for iid in self._tree.get_children():
-            rows.append((iid, self._tree.item(iid)["values"]))
-        if not rows:
-            return
-        # find column index
-        cols = list(self._tree["columns"])
-        try:
-            idx = cols.index(col)
-        except ValueError:
-            return
-        rev = self._sort_rev.get(col, False)
-
-        def key_func(pair):
-            val = pair[1][idx]
-            s = str(val).replace("₹", "").replace(",", "")
-            try:
-                return float(s)
-            except ValueError:
-                return str(val).lower()
-
-        sorted_rows = db.selection_sort(rows, key_func, reverse=rev)
-        self._clear()
-        for iid, values in sorted_rows:
-            self._tree.insert("", "end", values=values)
-        self._sort_rev[col] = not rev
-
-    def _draw_chart(self, labels, values, title=""):
-        c = self._chart
-        c.delete("all")
-        w = max(c.winfo_width(), 400)
-        h = 120
-        if not values or max(values) <= 0:
-            c.create_text(w // 2, h // 2, text="No chart data", fill="gray")
-            return
-        c.create_text(8, 10, text=title, anchor="w", font=("Arial", 9, "bold"))
-        pad_l, pad_r, pad_t, pad_b = 8, 8, 24, 8
-        n = len(values)
-        gap = 6
-        bar_w = max(12, (w - pad_l - pad_r - gap * (n - 1)) // n)
-        mx = max(values) or 1
-        chart_h = h - pad_t - pad_b
-        for i, (lab, val) in enumerate(zip(labels, values)):
-            x0 = pad_l + i * (bar_w + gap)
-            bh = int((val / mx) * (chart_h - 4))
-            y0 = h - pad_b - bh
-            c.create_rectangle(x0, y0, x0 + bar_w, h - pad_b, fill="#2E7D32", outline="")
-            c.create_text(x0 + bar_w // 2, y0 - 2, text=str(int(val)) if val >= 1 else f"{val:.0f}",
-                          font=("Arial", 7), anchor="s")
+    def _quick(self, days):
+        end = datetime.now(); start = end - timedelta(days=days)
+        self._from.set(start.strftime("%Y-%m-%d"))
+        self._to.set(end.strftime("%Y-%m-%d"))
+        self._load("sales")
 
     def _rep_sales(self):
-        self._set_cols([("bill", "Bill No", 120), ("date", "Date", 140),
-                        ("cust", "Customer", 120), ("med", "Medicine", 140),
-                        ("qty", "Qty", 50), ("total", "Total", 90)])
+        self._set_cols([("bill","Bill No",130,"center"),("date","Date",150,"center"),
+                        ("cust","Customer",140,"w"),("med","Medicine",170,"w"),
+                        ("qty","Qty",60,"center"),("up","Unit Price",100,"center"),
+                        ("total","Total (₹)",100,"center")])
         try:
-            s, e = self._from.get(), self._to.get()
-            datetime.strptime(s, "%Y-%m-%d")
-            datetime.strptime(e, "%Y-%m-%d")
+            s = self._from.get(); e = self._to.get()
+            datetime.strptime(s,"%Y-%m-%d"); datetime.strptime(e,"%Y-%m-%d")
         except ValueError:
-            messagebox.showerror("Date", "Use YYYY-MM-DD", parent=self.winfo_toplevel()); return
-        rows = db.get_transactions_by_date(self._user_id, s, e)
+            messagebox.showerror("Date Error","Use YYYY-MM-DD format.",
+                                 parent=self.winfo_toplevel()); return
+        rows = db.get_transactions_by_date(s, e)
         grand = 0.0
-        by_med = {}
-        for t in rows:
-            self._tree.insert("", "end", values=(
-                t["bill_number"], str(t["transaction_date"])[:19],
-                t["customer_name"], t["medicine_name"], t["quantity"],
-                f"₹{t['total_price']:.2f}"))
-            grand += float(t["total_price"])
-            by_med[t["medicine_name"]] = by_med.get(t["medicine_name"], 0) + float(t["total_price"])
-        self._summary.config(text=f"{len(rows)} transactions | Revenue: ₹{grand:.2f}")
-        top = sorted(by_med.items(), key=lambda x: -x[1])[:8]
-        self.after(50, lambda: self._draw_chart(
-            [x[0][:10] for x in top], [x[1] for x in top], "Sales by medicine"))
+        for i, t in enumerate(rows):
+            self._tree.insert("","end", tags=("alt" if i%2==0 else "",),
+                values=(t["bill_number"],t["transaction_date"][:19],
+                        t["customer_name"],t["medicine_name"],t["quantity"],
+                        f"₹{t['unit_price']:.2f}",f"₹{t['total_price']:.2f}"))
+            grand += t["total_price"]
+        self._summary.set(f"{len(rows)} transaction(s)  |  Revenue: ₹{grand:.2f}  |  {s} → {e}")
 
     def _rep_stock(self):
-        self._set_cols([("id", "ID", 40), ("name", "Medicine", 160),
-                        ("qty", "Qty", 60), ("price", "Price", 80),
-                        ("expiry", "Expiry", 100), ("status", "Status", 90)])
-        meds = db.get_all_medicines(self._user_id)
+        self._set_cols([("id","ID",55,"center"),("name","Medicine",200,"w"),
+                        ("qty","Quantity",90,"center"),("price","Price (₹)",100,"center"),
+                        ("expiry","Expiry Date",120,"center"),("minst","Min Stock",90,"center"),
+                        ("status","Status",120,"center")])
+        meds  = db.get_all_medicines()
         today = datetime.now().strftime("%Y-%m-%d")
-        for m in meds:
-            exp = str(m["expiry_date"])
-            if exp <= today:
-                status = "Expired"
-            elif m["quantity"] <= m["min_stock"]:
-                status = "Low Stock"
-            else:
-                status = "In Stock"
-            self._tree.insert("", "end", values=(
-                m["id"], m["name"], m["quantity"], f"₹{m['price']:.2f}", exp, status))
-        val = sum(float(m["quantity"]) * float(m["price"]) for m in meds)
-        self._summary.config(text=f"{len(meds)} SKUs | Value: ₹{val:.2f}")
-        top = sorted(meds, key=lambda m: -int(m["quantity"]))[:8]
-        self.after(50, lambda: self._draw_chart(
-            [m["name"][:10] for m in top], [int(m["quantity"]) for m in top], "Stock levels"))
+        for i, m in enumerate(meds):
+            if m["expiry_date"] <= today:   status, tag = "⚠ Expired",   "expired"
+            elif m["quantity"] <= m["min_stock"]: status, tag = "⚡ Low Stock", "low"
+            else:                            status, tag = "✔ In Stock",  "alt" if i%2==0 else ""
+            self._tree.insert("","end", tags=(tag,),
+                values=(m["id"],m["name"],m["quantity"],
+                        f"₹{m['price']:.2f}",m["expiry_date"],m["min_stock"],status))
+        val = sum(float(m["quantity"])*float(m["price"]) for m in meds)
+        self._summary.set(f"Total SKUs: {len(meds)}  |  Inventory Value: ₹{val:.2f}")
 
     def _rep_low_stock(self):
-        self._set_cols([("id", "ID", 40), ("name", "Medicine", 180),
-                        ("qty", "Current", 70), ("minst", "Min", 50), ("deficit", "Need", 60)])
-        meds = db.get_low_stock_medicines(self._user_id)
-        for m in meds:
-            self._tree.insert("", "end", values=(
-                m["id"], m["name"], m["quantity"], m["min_stock"],
-                m["min_stock"] - m["quantity"]))
-        self._summary.config(text=f"{len(meds)} need restocking")
-        top = meds[:8]
-        self.after(50, lambda: self._draw_chart(
-            [m["name"][:10] for m in top],
-            [max(0, m["min_stock"] - m["quantity"]) for m in top], "Units needed"))
+        self._set_cols([("id","ID",55,"center"),("name","Medicine",220,"w"),
+                        ("qty","Current Qty",110,"center"),("minst","Min Stock",90,"center"),
+                        ("deficit","Deficit",80,"center"),("price","Price (₹)",100,"center"),
+                        ("expiry","Expiry Date",120,"center")])
+        meds = db.get_low_stock_medicines()
+        for i, m in enumerate(meds):
+            deficit = m["min_stock"] - m["quantity"]
+            self._tree.insert("","end", tags=("low" if i%2==0 else "expired",),
+                values=(m["id"],m["name"],m["quantity"],m["min_stock"],
+                        deficit,f"₹{m['price']:.2f}",m["expiry_date"]))
+        self._summary.set(f"⚡  {len(meds)} medicine(s) require restocking")
 
     def _rep_expired(self):
-        self._set_cols([("id", "ID", 40), ("name", "Medicine", 180),
-                        ("qty", "Qty", 60), ("price", "Price", 80), ("expiry", "Expiry", 110)])
-        meds = db.get_expired_medicines(self._user_id)
+        self._set_cols([("id","ID",55,"center"),("name","Medicine",220,"w"),
+                        ("qty","Quantity",90,"center"),("price","Price (₹)",100,"center"),
+                        ("expiry","Expiry Date",130,"center"),("minst","Min Stock",90,"center")])
+        meds = db.get_expired_medicines()
         for m in meds:
-            self._tree.insert("", "end", values=(
-                m["id"], m["name"], m["quantity"], f"₹{m['price']:.2f}", m["expiry_date"]))
-        wasted = sum(float(m["quantity"]) * float(m["price"]) for m in meds)
-        self._summary.config(text=f"{len(meds)} expired | Wasted: ₹{wasted:.2f}")
-        top = meds[:8]
-        self.after(50, lambda: self._draw_chart(
-            [m["name"][:10] for m in top],
-            [float(m["quantity"]) * float(m["price"]) for m in top], "Wasted value"))
+            self._tree.insert("","end", tags=("expired",),
+                values=(m["id"],m["name"],m["quantity"],
+                        f"₹{m['price']:.2f}",m["expiry_date"],m["min_stock"]))
+        wasted = sum(float(m["quantity"])*float(m["price"]) for m in meds)
+        self._summary.set(f"⚠  {len(meds)} expired  |  Wasted Value: ₹{wasted:.2f}")
+
+
+    def _rep_purchases(self):
+        self._set_cols([("id","ID",50,"center"),("vendor","Vendor",150,"w"),
+                        ("invoice","Invoice",120,"center"),("date","Date",110,"center"),
+                        ("total","Total (₹)",110,"center")])
+        try:
+            s = self._from.get(); e = self._to.get()
+            datetime.strptime(s,"%Y-%m-%d"); datetime.strptime(e,"%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error","Use YYYY-MM-DD format.",
+                                 parent=self.winfo_toplevel()); return
+        rows = db.get_purchases_by_date(s, e)
+        grand = 0.0
+        for i, p in enumerate(rows):
+            self._tree.insert("","end", tags=("alt" if i%2==0 else "",),
+                values=(p["id"], p["vendor_name"], p["invoice_number"] or "—",
+                        p["purchase_date"], f"₹{p['total_amount']:.2f}"))
+            grand += float(p["total_amount"])
+        self._summary.set(f"{len(rows)} purchase(s)  |  Total Purchases: ₹{grand:.2f}  |  {s} → {e}")
+
+    def _rep_batches(self):
+        self._set_cols([("id","ID",50,"center"),("med","Medicine",160,"w"),
+                        ("batch","Batch No",100,"center"),("qty","Qty",60,"center"),
+                        ("cost","Cost/Unit",90,"center"),("expiry","Expiry",110,"center"),
+                        ("status","Status",120,"center")])
+        rows = db.get_all_batches()
+        for i, b in enumerate(rows):
+            status, tag = db.batch_status(b["expiry_date"])
+            if b["quantity"] <= 0:
+                status, tag = "— Empty", ""
+            self._tree.insert("","end", tags=(tag or ("alt" if i%2==0 else ""),),
+                values=(b["id"], b["medicine_name"], b["batch_number"],
+                        b["quantity"], f"₹{b['cost_price']:.2f}",
+                        b["expiry_date"], status))
+        self._summary.set(f"{len(rows)} batch record(s)")
+
+    def _rep_financial(self):
+        self._set_cols([("metric","Metric",220,"w"),("value","Value (₹)",140,"center")])
+        try:
+            s = self._from.get(); e = self._to.get()
+            datetime.strptime(s,"%Y-%m-%d"); datetime.strptime(e,"%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error","Use YYYY-MM-DD format.",
+                                 parent=self.winfo_toplevel()); return
+        fin = db.get_financial_summary(s, e)
+        rows = [
+            ("Revenue (Sales)", fin["revenue"]),
+            ("Cost of Goods Sold (COGS)", fin["cogs"]),
+            ("Gross Profit (Revenue − COGS)", fin["gross_profit"]),
+            ("Operating Expenses", fin["expenses"]),
+            ("Net Operating Profit", fin["net_profit"]),
+            ("Vendor Purchases (period)", fin["purchases_total"]),
+        ]
+        for i, (metric, val) in enumerate(rows):
+            self._tree.insert("","end", tags=("alt" if i%2==0 else "",),
+                values=(metric, f"₹{val:,.2f}"))
+        self._summary.set(
+            f"Financial Summary  |  {s} → {e}  |  "
+            f"Gross: ₹{fin['gross_profit']:,.2f}  Net: ₹{fin['net_profit']:,.2f}"
+        )
+
+    def _rep_vendor_hist(self):
+        self._set_cols([("id","ID",50,"center"),("vendor","Vendor",150,"w"),
+                        ("invoice","Invoice",120,"center"),("date","Date",110,"center"),
+                        ("total","Total (₹)",110,"center")])
+        try:
+            s = self._from.get(); e = self._to.get()
+            datetime.strptime(s,"%Y-%m-%d"); datetime.strptime(e,"%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error","Use YYYY-MM-DD format.",
+                                 parent=self.winfo_toplevel()); return
+        rows = db.get_purchases_by_date(s, e)
+        for i, p in enumerate(rows):
+            self._tree.insert("","end", tags=("alt" if i%2==0 else "",),
+                values=(p["id"], p["vendor_name"], p["invoice_number"] or "—",
+                        p["purchase_date"], f"₹{p['total_amount']:.2f}"))
+        self._summary.set(f"Vendor purchase history  |  {len(rows)} record(s)  |  {s} → {e}")
+
+    _sort_rev = {}
+    def _sort(self, col):
+        rev  = self._sort_rev.get(col, False)
+        data = [(self._tree.set(c, col), c) for c in self._tree.get_children("")]
+        data.sort(key=lambda t: t[0], reverse=rev)
+        for i, (_, iid) in enumerate(data): self._tree.move(iid, "", i)
+        self._sort_rev[col] = not rev
 
     def _export(self):
+        from tkinter import filedialog
+        import csv
         cols = self._tree["columns"]
         if not cols:
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
-                                            parent=self.winfo_toplevel())
-        if not path:
-            return
+            messagebox.showinfo("Export","No data to export.",
+                                parent=self.winfo_toplevel()); return
+        name = f"PharmaCare_{self._current}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        path = filedialog.asksaveasfilename(defaultextension=".csv",
+            filetypes=[("CSV","*.csv")], initialfile=name,
+            parent=self.winfo_toplevel())
+        if not path: return
         try:
             headers = [self._tree.heading(c)["text"] for c in cols]
-            rows = [[self._tree.set(ch, c) for c in cols] for ch in self._tree.get_children()]
+            rows = [[self._tree.set(ch, c) for c in cols]
+                    for ch in self._tree.get_children()]
             with open(path, "w", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerows([headers] + rows)
-            messagebox.showinfo("Exported", path, parent=self.winfo_toplevel())
+            messagebox.showinfo("Exported", f"Saved to:\n{path}",
+                                parent=self.winfo_toplevel())
         except Exception as e:
             messagebox.showerror("Failed", str(e), parent=self.winfo_toplevel())

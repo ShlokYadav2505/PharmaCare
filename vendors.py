@@ -90,10 +90,10 @@ class VendorsFrame(tk.Frame):
         cfg = [
             ("id", "ID", 50, False),
             ("name", "Vendor Name", 180, True),
-            ("contact", "Contact Person", 140, False),
+            ("contact", "Contact Person", 140, True),
             ("phone", "Phone", 110, False),
             ("email", "Email", 160, False),
-            ("address", "Address", 180, False),
+            ("address", "Address", 180, True),
         ]
         for col, hd, w, stretch in cfg:
             self._tree.heading(col, text=hd)
