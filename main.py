@@ -1,8 +1,4 @@
-# main.py
-# starting point of the application
-
-import sys
-import os
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import tkinter as tk
@@ -12,45 +8,46 @@ from login import LoginFrame
 
 class PharmaCareApp:
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("PharmaCare - Pharmacy Management System")
-        self.root.configure(bg="#F0F0F0")
+        self._root = tk.Tk()
+        self._root.title("PharmaCare – Pharmacy Management System")
+        self._root.configure(bg="#1B5E20")
+        self._root.resizable(False, False)
         db.initialize_database()
-        self.frame = None
-        self.show_login()
+        self._frame = None
+        self._center(900, 580)
+        self._show_login()
 
-    def center(self, w, h):
-        self.root.update_idletasks()
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        x = (sw - w) // 2
-        y = (sh - h) // 2
-        self.root.geometry(str(w) + "x" + str(h) + "+" + str(x) + "+" + str(y))
+    def _center(self, w, h):
+        self._root.update_idletasks()
+        sw = self._root.winfo_screenwidth()
+        sh = self._root.winfo_screenheight()
+        self._root.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
-    def clear(self):
-        if self.frame:
-            self.frame.destroy()
-            self.frame = None
+    def _clear(self):
+        if self._frame:
+            self._frame.destroy()
+            self._frame = None
 
-    def show_login(self):
-        self.clear()
-        self.center(420, 340)
-        self.root.resizable(False, False)
-        self.frame = LoginFrame(self.root, on_success_callback=self.show_dashboard)
-        self.frame.pack(fill="both", expand=True)
+    def _show_login(self):
+        self._clear()
+        self._root.resizable(False, False)
+        self._center(900, 580)
+        self._frame = LoginFrame(self._root,
+                                 on_success_callback=self._show_dashboard)
+        self._frame.place(x=0, y=0, relwidth=1, relheight=1)
 
-    def show_dashboard(self, email, user_id):
+    def _show_dashboard(self, username):
         from dashboard import DashboardApp
-        self.clear()
-        self.root.resizable(True, True)
-        self.center(1000, 650)
-        self.frame = DashboardApp(self.root, email, user_id, on_logout_callback=self.show_login)
-        self.frame.pack(fill="both", expand=True)
+        self._clear()
+        self._root.resizable(True, True)
+        self._center(1300, 780)
+        self._frame = DashboardApp(self._root, username,
+                                   on_logout_callback=self._show_login)
+        self._frame.place(x=0, y=0, relwidth=1, relheight=1)
 
     def run(self):
-        self.root.mainloop()
+        self._root.mainloop()
 
 
 if __name__ == "__main__":
-    app = PharmaCareApp()
-    app.run()
+    PharmaCareApp().run()
