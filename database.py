@@ -185,12 +185,14 @@ def get_user_by_email(email):
     return row
 
 
-def validate_login(username, password):
-    user = get_user_by_username(username)
+def validate_login(email, password):
+    """Authenticate an account using its email address and password."""
+    user = get_user_by_email(email)
     if not user:
-        return False, "Username not found.", None
+        return False, "Email address not found.", None
     if user["password"] != hash_password(password):
         return False, "Incorrect password.", None
+    # Keep returning the username because the dashboard currently displays it.
     return True, "Login successful.", user["username"]
 
 
