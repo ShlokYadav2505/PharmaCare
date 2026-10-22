@@ -1,14 +1,17 @@
-import smtplib, random, string, threading
+import smtplib, random, string, threading, os
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-# ── Edit these two lines ──────────────────────────────────────────────────────
+# Configure email outside source code. Never commit Gmail app passwords.
+# Windows PowerShell example:
+#   $env:PHARMACARE_EMAIL="your-address@gmail.com"
+#   $env:PHARMACARE_EMAIL_PASSWORD="your-new-gmail-app-password"
 SMTP_CONFIG = {
-    "email":       "shlok.vyadav2508@gmail.com",    # Your Gmail address
-    "password":    "your_app_password_here",  # 16-char Gmail App Password
-    "smtp_server": "crfa mogy oegk hggs",
-    "smtp_port":   587,
+    "email": os.getenv("PHARMACARE_EMAIL", ""),
+    "password": os.getenv("PHARMACARE_EMAIL_PASSWORD", ""),
+    "smtp_server": os.getenv("PHARMACARE_SMTP_SERVER", "smtp.gmail.com"),
+    "smtp_port": int(os.getenv("PHARMACARE_SMTP_PORT", "587")),
 }
 
 # In-memory OTP store: { email: {"otp": str, "expires": datetime} }
@@ -51,6 +54,8 @@ def clear_otp(email):
 def _send_raw(to_email, subject, html_body):
     """Send one HTML email. Returns (success, message)."""
     try:
+        if not SMTP_CONFIG["email"] or not SMTP_CONFIG["password"]:
+            return False, "Email is not configured. Set PHARMACARE_EMAIL and PHARMACARE_EMAIL_PASSWORD environment variables."
         msg = MIMEMultipart("alternative")
         msg["From"]    = SMTP_CONFIG["email"]
         msg["To"]      = to_email
