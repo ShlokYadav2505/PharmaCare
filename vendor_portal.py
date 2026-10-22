@@ -1,6 +1,6 @@
 """Simple role-specific Tkinter screens for the vendor purchase workflow."""
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from datetime import date
 import database as db
 import vendor_system as vs
@@ -97,7 +97,7 @@ class VendorPortalFrame(tk.Frame):
         tk.Entry(form, textvariable=self.order_qty, width=10).pack(side="left", padx=8)
         tk.Button(form, text="Place order & email receipt", command=self._place_order,
                   bg="#2E7D32", fg="white", padx=12, pady=5).pack(side="left", padx=4)
-        tk.Button(form, text="Receive selected dispatched order", command=lambda: self._act("receive"),
+        tk.Button(form, text="Receive selected dispatched order", command=self._receive_selected,
                   padx=12, pady=5).pack(side="left", padx=4)
         tk.Button(form, text="Cancel pending order", command=lambda: self._act("cancel"),
                   padx=12, pady=5).pack(side="left", padx=4)
@@ -143,6 +143,33 @@ class VendorPortalFrame(tk.Frame):
         vs.send_order_receipt(result, user["email"])
         self.refresh()
         messagebox.showinfo("Order placed", f"Order #{result} saved. An email receipt will be sent if SMTP is configured.", parent=self)
+
+    def _receive_selected(self):
+        order_id = self._selected_id(self.orders_tree)
+        if order_id is None:
+            return
+        items = vs.get_order_items(order_id)
+        if len(items) != 1:
+            messagebox.showerror("Receive order", "This screen supports one medicine per order.", parent=self)
+            return
+        item = items[0]
+        remaining = int(item["quantity"]) - int(item["received_quantity"])
+        if remaining <= 0:
+            messagebox.showinfo("Receive order", "This order has already been fully received.", parent=self)
+            return
+        qty = simpledialog.askinteger(
+            "Verify delivery",
+            f"Ordered: {item['quantity']}\\nAlready received: {item['received_quantity']}\\nStill expected: {remaining}\\n\\nEnter the quantity physically received now:",
+            parent=self, minvalue=1, maxvalue=remaining
+        )
+        if qty is None:
+            return
+        ok, msg = vs.transition_order(order_id, "receive", self.role, self.user_id, receive_quantity=qty)
+        if not ok:
+            messagebox.showerror("Receive order", msg, parent=self)
+        else:
+            messagebox.showinfo("Receive order", msg, parent=self)
+        self.refresh()
 
     def _act(self, action):
         tree = self.orders_tree
