@@ -234,6 +234,27 @@ def transition_order(order_id, action, actor_role, actor_id):
             new_status = "Dispatched"
         elif action == "receive" and actor_role == "pharmacist" and status in ("Dispatched", "Partially Received"):
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
+            # Create one legacy purchase record per order, linked to received batches.
+            vendor_profile = conn.execute("SELECT business_name FROM vendor_accounts WHERE id=?",
+                                          (order["vendor_id"],)).fetchone()
+            vendor_name = vendor_profile["business_name"]
+            legacy_vendor = conn.execute("SELECT id FROM vendors WHERE lower(name)=lower(?)",
+                                         (vendor_name,)).fetchone()
+            if legacy_vendor:
+                legacy_vendor_id = legacy_vendor["id"]
+            else:
+                legacy_vendor_id = conn.execute("INSERT INTO vendors(name) VALUES (?)",
+                                                (vendor_name,)).lastrowid
+            purchase = conn.execute("SELECT id FROM purchases WHERE invoice_number=?",
+                                    (f"PO-{order_id}",)).fetchone()
+            if purchase:
+                purchase_id = purchase["id"]
+            else:
+                purchase_id = conn.execute(
+                    """INSERT INTO purchases(vendor_id,invoice_number,purchase_date,total_amount,notes)
+                       VALUES (?,?,?,?,?)""",
+                    (legacy_vendor_id, f"PO-{order_id}", datetime.now().strftime("%Y-%m-%d"),
+                     float(order["total_amount"]), f"Received from vendor portal order #{order_id}")).lastrowid
             for item in items:
                 outstanding = item["quantity"] - item["received_quantity"]
                 if outstanding <= 0:
@@ -251,9 +272,9 @@ def transition_order(order_id, action, actor_role, actor_id):
                                               (batch_no, medicine_id)).fetchone()
                 if not existing_batch:
                     conn.execute("""INSERT INTO batches
-                        (medicine_id,batch_number,quantity,cost_price,expiry_date)
-                        VALUES (?,?,?,?,?)""",
-                        (medicine_id, batch_no, outstanding, item["unit_price"], item["expiry_date"]))
+                        (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date)
+                        VALUES (?,?,?,?,?,?)""",
+                        (medicine_id, purchase_id, batch_no, outstanding, item["unit_price"], item["expiry_date"]))
                 db._sync_medicine_quantity(conn, medicine_id)
                 conn.execute("UPDATE vendor_order_items SET received_quantity=quantity WHERE id=?", (item["id"],))
             new_status = "Received"
