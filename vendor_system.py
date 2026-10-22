@@ -205,8 +205,8 @@ def get_order_items(order_id):
     return rows
 
 
-def transition_order(order_id, action, actor_role, actor_id):
-    """Perform valid order transitions; confirmation reserves vendor stock."""
+def transition_order(order_id, action, actor_role, actor_id, receive_quantity=None):
+    """Apply an allowed transition. Pharmacy stock changes only on verified receipt."""
     conn = _conn()
     try:
         order = conn.execute("SELECT * FROM vendor_orders WHERE id=?", (order_id,)).fetchone()
@@ -234,7 +234,17 @@ def transition_order(order_id, action, actor_role, actor_id):
             new_status = "Dispatched"
         elif action == "receive" and actor_role == "pharmacist" and status in ("Dispatched", "Partially Received"):
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
-            # Create one legacy purchase record per order, linked to received batches.
+            if len(items) != 1:
+                return False, "This receipt screen supports one medicine per order."
+            item = items[0]
+            outstanding = int(item["quantity"]) - int(item["received_quantity"])
+            try:
+                qty = int(receive_quantity)
+            except (TypeError, ValueError):
+                return False, "Enter the quantity actually received."
+            if qty < 1 or qty > outstanding:
+                return False, f"Received quantity must be between 1 and {outstanding}."
+
             vendor_profile = conn.execute("SELECT business_name FROM vendor_accounts WHERE id=?",
                                           (order["vendor_id"],)).fetchone()
             vendor_name = vendor_profile["business_name"]
@@ -245,46 +255,49 @@ def transition_order(order_id, action, actor_role, actor_id):
             else:
                 legacy_vendor_id = conn.execute("INSERT INTO vendors(name) VALUES (?)",
                                                 (vendor_name,)).lastrowid
-            purchase = conn.execute("SELECT id FROM purchases WHERE invoice_number=?",
+
+            purchase = conn.execute("SELECT id, total_amount FROM purchases WHERE invoice_number=?",
                                     (f"PO-{order_id}",)).fetchone()
+            received_cost = round(qty * float(item["unit_price"]), 2)
             if purchase:
                 purchase_id = purchase["id"]
+                conn.execute("UPDATE purchases SET total_amount=total_amount+? WHERE id=?",
+                             (received_cost, purchase_id))
             else:
                 purchase_id = conn.execute(
                     """INSERT INTO purchases(vendor_id,invoice_number,purchase_date,total_amount,notes)
                        VALUES (?,?,?,?,?)""",
                     (legacy_vendor_id, f"PO-{order_id}", datetime.now().strftime("%Y-%m-%d"),
-                     float(order["total_amount"]), f"Received from vendor portal order #{order_id}")).lastrowid
-            for item in items:
-                outstanding = item["quantity"] - item["received_quantity"]
-                if outstanding <= 0:
-                    continue
-                med = conn.execute("SELECT id FROM medicines WHERE lower(name)=lower(?) ORDER BY id LIMIT 1",
-                                   (item["medicine_name"],)).fetchone()
-                if med:
-                    medicine_id = med["id"]
-                else:
-                    cur = conn.execute("""INSERT INTO medicines(name,quantity,price,expiry_date,min_stock)
-                        VALUES (?,0,?, ?,10)""", (item["medicine_name"], item["unit_price"], item["expiry_date"]))
-                    medicine_id = cur.lastrowid
-                batch_no = f"ORD-{order_id}-ITEM-{item['id']}"
-                existing_batch = conn.execute("SELECT id FROM batches WHERE batch_number=? AND medicine_id=?",
-                                              (batch_no, medicine_id)).fetchone()
-                if not existing_batch:
-                    conn.execute("""INSERT INTO batches
-                        (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date)
-                        VALUES (?,?,?,?,?,?)""",
-                        (medicine_id, purchase_id, batch_no, outstanding, item["unit_price"], item["expiry_date"]))
-                db._sync_medicine_quantity(conn, medicine_id)
-                conn.execute("UPDATE vendor_order_items SET received_quantity=quantity WHERE id=?", (item["id"],))
-            new_status = "Received"
+                     received_cost, f"Received from vendor portal order #{order_id}")).lastrowid
+
+            med = conn.execute("SELECT id FROM medicines WHERE lower(name)=lower(?) ORDER BY id LIMIT 1",
+                               (item["medicine_name"],)).fetchone()
+            if med:
+                medicine_id = med["id"]
+            else:
+                cur = conn.execute("""INSERT INTO medicines(name,quantity,price,expiry_date,min_stock)
+                    VALUES (?,0,?, ?,10)""", (item["medicine_name"], item["unit_price"], item["expiry_date"]))
+                medicine_id = cur.lastrowid
+
+            new_received = int(item["received_quantity"]) + qty
+            batch_no = f"ORD-{order_id}-ITEM-{item['id']}-R{new_received}"
+            conn.execute("""INSERT INTO batches
+                (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date)
+                VALUES (?,?,?,?,?,?)""",
+                (medicine_id, purchase_id, batch_no, qty, item["unit_price"], item["expiry_date"]))
+            db._sync_medicine_quantity(conn, medicine_id)
+            conn.execute("UPDATE vendor_order_items SET received_quantity=? WHERE id=?",
+                         (new_received, item["id"]))
+            new_status = "Received" if new_received >= int(item["quantity"]) else "Partially Received"
         elif action == "reject" and actor_role == "vendor" and status == "Pending":
             new_status = "Rejected"
         elif action == "cancel" and actor_role == "pharmacist" and status == "Pending":
             new_status = "Cancelled"
         else:
             return False, f"Action '{action}' is not valid when order status is {status}."
-        conn.execute("UPDATE vendor_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (new_status, order_id))
+
+        conn.execute("UPDATE vendor_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                     (new_status, order_id))
         conn.commit()
         return True, f"Order #{order_id} marked {new_status}."
     except Exception as exc:
@@ -292,7 +305,6 @@ def transition_order(order_id, action, actor_role, actor_id):
         return False, str(exc)
     finally:
         conn.close()
-
 
 def mark_order_email_status(order_id, status):
     conn = _conn()
