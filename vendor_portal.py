@@ -79,7 +79,7 @@ class VendorPortalFrame(tk.Frame):
             ("total","Total ₹",120),("status","Status",150),("date","Placed",160)], 5)
         buttons = tk.Frame(self.body, bg="#F4F7F4")
         buttons.pack(fill="x")
-        for label, action in [("Confirm selected", "confirm"), ("Mark dispatched", "dispatch"), ("Refresh", "refresh")]:
+        for label, action in [("Confirm selected", "confirm"), ("Reject selected", "reject"), ("Mark dispatched", "dispatch"), ("Refresh", "refresh")]:
             tk.Button(buttons, text=label, command=(self.refresh if action=="refresh" else lambda a=action: self._act(a)),
                       padx=12, pady=5).pack(side="left", padx=(0,8))
         self.refresh()
