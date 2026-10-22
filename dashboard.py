@@ -80,65 +80,53 @@ class DashboardApp(tk.Frame):
         self._content.columnconfigure(0, weight=1)
 
     def _build_sidebar(self, sb):
-        # Logo
-        lo = tk.Frame(sb, bg=st.COLORS["primary_dark"])
-        lo.pack(fill="x")
-        tk.Label(lo, text="✚", font=("Calibri",28,"bold"),
-                 bg=st.COLORS["primary_dark"], fg=st.COLORS["accent"]).pack(pady=(20,0))
-        tk.Label(lo, text="PharmaCare", font=st.FONTS["logo"],
-                 bg=st.COLORS["primary_dark"], fg=st.COLORS["white"]).pack()
-        tk.Label(lo, text="Pharmacy Management", font=("Calibri",9),
-                 bg=st.COLORS["primary_dark"], fg=st.COLORS["sidebar_icon"]).pack(pady=(0,16))
-        tk.Frame(sb, bg=st.COLORS["sidebar_hover"], height=1).pack(fill="x")
+        # App title
+        tk.Label(
+            sb, text="PharmaCare", font=st.FONTS["logo"],
+            bg=st.COLORS["sidebar_bg"], fg=st.COLORS["white"]
+        ).pack(fill="x", padx=16, pady=(20, 4), anchor="w")
 
-        # User info
-        uf = tk.Frame(sb, bg=st.COLORS["sidebar_bg"])
-        uf.pack(fill="x", pady=14, padx=16)
-        tk.Label(uf, text="👤", font=("Calibri",22),
-                 bg=st.COLORS["sidebar_hover"], fg=st.COLORS["white"],
-                 width=3).pack(side="left", padx=(0,10))
-        info = tk.Frame(uf, bg=st.COLORS["sidebar_bg"])
-        info.pack(side="left")
-        tk.Label(info, text=self._username, font=st.FONTS["body_bold"],
-                 bg=st.COLORS["sidebar_bg"], fg=st.COLORS["white"],
-                 anchor="w").pack(anchor="w")
-        tk.Label(info, text="Pharmacist", font=st.FONTS["small"],
-                 bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_icon"],
-                 anchor="w").pack(anchor="w")
-        tk.Frame(sb, bg=st.COLORS["sidebar_hover"], height=1).pack(fill="x")
-        tk.Frame(sb, bg=st.COLORS["sidebar_bg"], height=10).pack()
+        tk.Label(
+            sb, text="Pharmacy Management System",
+            font=st.FONTS["small"], bg=st.COLORS["sidebar_bg"],
+            fg=st.COLORS["sidebar_icon"]
+        ).pack(fill="x", padx=16, pady=(0, 16), anchor="w")
 
-        # Nav items
+        tk.Label(
+            sb, text=self._username, font=st.FONTS["body_bold"],
+            bg=st.COLORS["sidebar_bg"], fg=st.COLORS["white"]
+        ).pack(fill="x", padx=16, pady=(0, 12), anchor="w")
+
+        # Main sections
         for icon, label, key in self.NAV:
-            btn = tk.Button(sb, text=f"  {icon}   {label}",
-                            font=st.FONTS["sidebar_item"],
-                            bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_text"],
-                            relief="flat", bd=0, cursor="hand2",
-                            padx=16, pady=13, anchor="w",
-                            activebackground=st.COLORS["sidebar_active"],
-                            activeforeground=st.COLORS["white"],
-                            command=lambda k=key: self._switch(k))
+            btn = tk.Button(
+                sb, text=label, font=st.FONTS["sidebar_item"],
+                bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_text"],
+                relief="flat", bd=0, cursor="hand2", padx=16, pady=10,
+                anchor="w", activebackground=st.COLORS["sidebar_active"],
+                activeforeground=st.COLORS["white"],
+                command=lambda k=key: self._switch(k)
+            )
             btn.pack(fill="x")
             st.add_hover(btn, st.COLORS["sidebar_bg"], st.COLORS["sidebar_hover"])
             self._nav_btns[key] = btn
 
-        # Logout
+        # Keep logout at the bottom
         tk.Frame(sb, bg=st.COLORS["sidebar_bg"]).pack(fill="both", expand=True)
-        tk.Frame(sb, bg=st.COLORS["sidebar_hover"], height=1).pack(fill="x")
-        lb = tk.Button(sb, text="⎋  Logout", font=st.FONTS["sidebar_item"],
-                       bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_icon"],
-                       relief="flat", bd=0, cursor="hand2", padx=20, pady=12,
-                       anchor="w", activebackground=st.COLORS["danger"],
-                       activeforeground=st.COLORS["white"],
-                       command=self._logout)
-        lb.pack(fill="x")
-        st.add_hover(lb, st.COLORS["sidebar_bg"], st.COLORS["danger"],
-                     st.COLORS["sidebar_icon"], st.COLORS["white"])
+        logout = tk.Button(
+            sb, text="Logout", font=st.FONTS["sidebar_item"],
+            bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_text"],
+            relief="flat", bd=0, cursor="hand2", padx=16, pady=10,
+            anchor="w", command=self._logout
+        )
+        logout.pack(fill="x", pady=(0, 8))
+        st.add_hover(logout, st.COLORS["sidebar_bg"], st.COLORS["danger"])
 
         self._clock = tk.StringVar()
-        tk.Label(sb, textvariable=self._clock, font=("Calibri",9),
-                 bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_icon"]
-                 ).pack(pady=(4,10))
+        tk.Label(
+            sb, textvariable=self._clock, font=st.FONTS["small"],
+            bg=st.COLORS["sidebar_bg"], fg=st.COLORS["sidebar_icon"]
+        ).pack(pady=(0, 10))
         self._tick()
 
     def _tick(self):
@@ -198,124 +186,138 @@ class HomeFrame(tk.Frame):
 
     def _build_ui(self):
         self.columnconfigure(0, weight=1)
+        self.rowconfigure(4, weight=1)
 
-        # Banner
-        banner = tk.Frame(self, bg=st.COLORS["primary_dark"])
-        banner.grid(row=0, column=0, sticky="ew", padx=20, pady=(20,0))
-        lb = tk.Frame(banner, bg=st.COLORS["primary_dark"])
-        lb.pack(side="left", fill="y", padx=24, pady=16)
-        hour = datetime.now().hour
-        greet = "Good Morning" if hour<12 else "Good Afternoon" if hour<17 else "Good Evening"
-        tk.Label(lb, text=f"{greet}, {self._username}!",
-                 font=st.FONTS["heading"], bg=st.COLORS["primary_dark"],
-                 fg=st.COLORS["white"]).pack(anchor="w")
-        tk.Label(lb, text=datetime.now().strftime("Today is %A, %d %B %Y"),
-                 font=st.FONTS["body"], bg=st.COLORS["primary_dark"],
-                 fg=st.COLORS["sidebar_icon"]).pack(anchor="w")
-        tk.Label(banner, text="✚", font=("Calibri",48),
-                 bg=st.COLORS["primary_dark"], fg=st.COLORS["accent"]).pack(side="right", padx=24)
+        # Page heading
+        heading = tk.Frame(self, bg=st.COLORS["background"])
+        heading.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 10))
 
-        # KPI cards
-        cr = tk.Frame(self, bg=st.COLORS["background"])
-        cr.grid(row=1, column=0, sticky="ew", padx=20, pady=16)
-        for i in range(4): cr.columnconfigure(i, weight=1)
+        tk.Label(
+            heading, text="Dashboard", font=st.FONTS["title"],
+            bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
+        ).pack(anchor="w")
+
+        tk.Label(
+            heading, text=datetime.now().strftime("%A, %d %B %Y"),
+            font=st.FONTS["body"], bg=st.COLORS["background"],
+            fg=st.COLORS["text_light"]
+        ).pack(anchor="w", pady=(3, 0))
+
+        # Summary values
+        summary = tk.Frame(self, bg=st.COLORS["background"])
+        summary.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 10))
+        for col in range(3):
+            summary.columnconfigure(col, weight=1)
 
         self._card_vals = {}
-        cards = [("💊","Total Medicines","total_medicines",st.COLORS["card_medicine"],"inventory"),
-                 ("💰","Total Sales (₹)","total_sales",    st.COLORS["card_sales"],   "reports"),
-                 ("⚡","Low Stock",      "low_stock_count", st.COLORS["card_low"],     "inventory"),
-                 ("⚠","Expired",        "expired_count",   st.COLORS["card_expired"], "inventory")]
-        for col, (icon, lbl, key, colour, nav) in enumerate(cards):
-            val_lbl = self._make_card(cr, icon, lbl, colour, nav)
-            self._card_vals[key] = val_lbl
-            val_lbl.master.grid(row=0, column=col, padx=8, sticky="nsew")
-
-        # Financial summary row
-        fin = tk.Frame(self, bg=st.COLORS["background"])
-        fin.grid(row=2, column=0, sticky="ew", padx=20, pady=(0,8))
-        for i in range(5):
-            fin.columnconfigure(i, weight=1)
-        fin_cards = [
-            ("📈","Revenue","fin_revenue", st.COLORS["card_sales"], "reports"),
-            ("📉","COGS","fin_cogs", st.COLORS["card_low"], "reports"),
-            ("💹","Gross Profit","fin_gross", st.COLORS["primary"], "reports"),
-            ("💸","Expenses","fin_exp", st.COLORS["warning"], "expenses"),
-            ("✅","Net Profit","fin_net", st.COLORS["primary_dark"], "reports"),
+        cards = [
+            ("Total Medicines", "total_medicines", st.COLORS["primary"], "inventory"),
+            ("Total Sales (₹)", "total_sales", st.COLORS["primary"], "reports"),
+            ("Low Stock", "low_stock_count", st.COLORS["warning"], "inventory"),
+            ("Expired Medicines", "expired_count", st.COLORS["danger"], "inventory"),
+            ("Revenue", "fin_revenue", st.COLORS["primary"], "reports"),
+            ("Cost of Goods Sold", "fin_cogs", st.COLORS["primary"], "reports"),
+            ("Gross Profit", "fin_gross", st.COLORS["primary"], "reports"),
+            ("Operating Expenses", "fin_exp", st.COLORS["warning"], "expenses"),
+            ("Net Operating Profit", "fin_net", st.COLORS["primary"], "reports"),
         ]
-        for col, (icon, lbl, key, colour, nav) in enumerate(fin_cards):
-            val_lbl = self._make_card(fin, icon, lbl, colour, nav)
-            self._card_vals[key] = val_lbl
-            val_lbl.master.grid(row=0, column=col, padx=6, sticky="nsew")
 
-        # Expiring soon note
+        for i, (label, key, colour, nav) in enumerate(cards):
+            value_label = self._make_card(summary, label, colour, nav)
+            value_label.master.grid(
+                row=i // 3, column=i % 3, padx=5, pady=5, sticky="nsew"
+            )
+            self._card_vals[key] = value_label
+
+        # Expiry warning
         self._exp_soon_var = tk.StringVar()
-        tk.Label(self, textvariable=self._exp_soon_var, font=st.FONTS["body"],
-                 bg=st.COLORS["background"], fg=st.COLORS["warning"],
-                 anchor="w").grid(row=3, column=0, sticky="ew", padx=24, pady=(0,4))
+        tk.Label(
+            self, textvariable=self._exp_soon_var, font=st.FONTS["body"],
+            bg=st.COLORS["background"], fg=st.COLORS["warning"], anchor="w"
+        ).grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
 
-        # Quick actions
-        tk.Label(self, text="Quick Actions", font=st.FONTS["subheading"],
-                 bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
-                 ).grid(row=4, column=0, sticky="w", padx=24, pady=(0,8))
-        qa = tk.Frame(self, bg=st.COLORS["background"])
-        qa.grid(row=5, column=0, sticky="ew", padx=20, pady=(0,16))
-        for text, nav, style in [("+ Add Medicine","inventory",st.BUTTON["primary"]),
-                                  ("📦 Add Stock","purchases",st.BUTTON["primary"]),
-                                  ("🧾 New Bill",  "billing",  st.BUTTON["primary"]),
-                                  ("📊 Reports",   "reports",  st.BUTTON["secondary"])]:
-            b = tk.Button(qa, text=text, command=lambda n=nav: self._navigate(n), **style)
-            b.pack(side="left", padx=(0,12))
-            if style == st.BUTTON["primary"]:
-                st.add_hover(b, st.COLORS["primary"], st.COLORS["primary_dark"])
+        # Shortcuts
+        actions = tk.Frame(self, bg=st.COLORS["background"])
+        actions.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 10))
+        tk.Label(
+            actions, text="Quick Actions", font=st.FONTS["subheading"],
+            bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
+        ).pack(side="left", padx=(0, 12))
+
+        for label, nav in [
+            ("Add Medicine", "inventory"),
+            ("Add Stock", "purchases"),
+            ("New Bill", "billing"),
+            ("Reports", "reports"),
+        ]:
+            tk.Button(
+                actions, text=label, command=lambda k=nav: self._navigate(k),
+                **st.BUTTON["primary"]
+            ).pack(side="left", padx=4)
 
         # Recent transactions
-        tk.Label(self, text="Recent Transactions", font=st.FONTS["subheading"],
-                 bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
-                 ).grid(row=6, column=0, sticky="w", padx=24, pady=(0,6))
-        tf = tk.Frame(self, bg=st.COLORS["white"],
-                      highlightbackground=st.COLORS["border"], highlightthickness=1)
-        tf.grid(row=7, column=0, sticky="nsew", padx=20, pady=(0,20))
-        self.rowconfigure(7, weight=1)
-        tf.columnconfigure(0, weight=1); tf.rowconfigure(0, weight=1)
+        tk.Label(
+            self, text="Recent Transactions", font=st.FONTS["subheading"],
+            bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
+        ).grid(row=4, column=0, sticky="w", padx=20, pady=(4, 6))
+
+        table_frame = tk.Frame(self, bg=st.COLORS["white"])
+        table_frame.grid(row=5, column=0, sticky="nsew", padx=20, pady=(0, 16))
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        self.rowconfigure(5, weight=1)
 
         from tkinter import ttk
-        sty = ttk.Style()
-        st.apply_treeview_style(sty, "Home.Treeview")
-        cols = ("bill","date","customer","medicine","qty","total")
-        self._tree = ttk.Treeview(tf, columns=cols, show="headings",
-                                   style="Home.Treeview", selectmode="browse", height=8)
-        for col, hd, w, anchor in [("bill","Bill No",120,"center"),
-                                    ("date","Date",130,"center"),
-                                    ("customer","Customer",140,"w"),
-                                    ("medicine","Medicine",180,"w"),
-                                    ("qty","Qty",60,"center"),
-                                    ("total","Total (₹)",100,"center")]:
-            self._tree.heading(col, text=hd)
-            self._tree.column(col, width=w, anchor=anchor)
-        vsb = ttk.Scrollbar(tf, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
+        tree_style = ttk.Style()
+        st.apply_treeview_style(tree_style, "Home.Treeview")
+
+        columns = ("bill", "date", "customer", "medicine", "qty", "total")
+        self._tree = ttk.Treeview(
+            table_frame, columns=columns, show="headings",
+            style="Home.Treeview", selectmode="browse", height=6
+        )
+
+        headings = [
+            ("bill", "Bill No", 100, "center"),
+            ("date", "Date", 140, "center"),
+            ("customer", "Customer", 140, "w"),
+            ("medicine", "Medicine", 180, "w"),
+            ("qty", "Qty", 60, "center"),
+            ("total", "Total (₹)", 100, "center"),
+        ]
+        for col, title, width, anchor in headings:
+            self._tree.heading(col, text=title)
+            self._tree.column(col, width=width, anchor=anchor)
+
+        scrollbar = ttk.Scrollbar(
+            table_frame, orient="vertical", command=self._tree.yview
+        )
+        self._tree.configure(yscrollcommand=scrollbar.set)
         self._tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
+        scrollbar.grid(row=0, column=1, sticky="ns")
         self._tree.tag_configure("alt", background=st.COLORS["row_even"])
 
-    def _make_card(self, parent, icon, label, colour, nav):
-        card = tk.Frame(parent, bg=st.COLORS["white"],
-                        highlightbackground=colour, highlightthickness=2, cursor="hand2")
-        card.bind("<Button-1>", lambda e, n=nav: self._navigate(n))
-        tk.Frame(card, bg=colour, height=5).pack(fill="x")
-        inner = tk.Frame(card, bg=st.COLORS["white"])
-        inner.pack(padx=16, pady=12, fill="both")
-        tk.Label(inner, text=icon, font=("Calibri",26),
-                 bg=st.COLORS["white"], fg=colour).pack(anchor="w")
-        val = tk.Label(inner, text="—", font=st.FONTS["card_number"],
-                       bg=st.COLORS["white"], fg=colour)
-        val.pack(anchor="w")
-        tk.Label(inner, text=label, font=st.FONTS["card_label"],
-                 bg=st.COLORS["white"], fg=st.COLORS["text_light"]).pack(anchor="w")
-        st.add_hover(card, st.COLORS["white"], st.COLORS["light_green"])
-        for w in (card, inner):
-            w.bind("<Button-1>", lambda e, n=nav: self._navigate(n))
-        return val
+    def _make_card(self, parent, label, colour, nav):
+        card = tk.Frame(
+            parent, bg=st.COLORS["white"],
+            highlightbackground=st.COLORS["border"], highlightthickness=1
+        )
+
+        tk.Label(
+            card, text=label, font=st.FONTS["body_bold"],
+            bg=st.COLORS["white"], fg=st.COLORS["text_medium"]
+        ).pack(anchor="w", padx=10, pady=(8, 2))
+
+        value = tk.Label(
+            card, text="—", font=st.FONTS["card_number"],
+            bg=st.COLORS["white"], fg=colour
+        )
+        value.pack(anchor="w", padx=10, pady=(0, 8))
+
+        for widget in (card, *card.winfo_children()):
+            widget.bind("<Button-1>", lambda event, key=nav: self._navigate(key))
+
+        return value
 
     def refresh(self):
         stats = db.get_dashboard_stats()
