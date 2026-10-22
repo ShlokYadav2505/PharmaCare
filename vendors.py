@@ -224,7 +224,7 @@ class VendorDialog(tk.Toplevel):
         self.configure(bg=st.COLORS["white"])
         self._on_save = on_save
         self._build_ui(title)
-        self._center(440, 460)
+        self._center(440, min(470, self.winfo_screenheight() - 80))
         if vendor:
             self._populate(vendor)
 
@@ -236,13 +236,13 @@ class VendorDialog(tk.Toplevel):
 
     def _field(self, parent, label):
         f = tk.Frame(parent, bg=st.COLORS["white"])
-        f.pack(fill="x", padx=30, pady=(0, 10))
+        f.pack(fill="x", padx=30, pady=(0, 6))
         tk.Label(
             f, text=label, font=st.FONTS["body_bold"],
             bg=st.COLORS["white"], fg=st.COLORS["text_medium"]
         ).pack(anchor="w")
         var = tk.StringVar()
-        tk.Entry(f, textvariable=var, **st.ENTRY).pack(fill="x", ipady=7, pady=(4, 0))
+        tk.Entry(f, textvariable=var, **st.ENTRY).pack(fill="x", ipady=4, pady=(2, 0))
         return var
 
     def _build_ui(self, title):
@@ -251,9 +251,18 @@ class VendorDialog(tk.Toplevel):
         tk.Label(
             hdr, text=f"🏢  {title}", font=st.FONTS["subheading"],
             bg=st.COLORS["primary"], fg=st.COLORS["white"]
-        ).pack(pady=14)
+        ).pack(pady=10)
+        # Pin actions to the bottom so they remain visible on shorter displays.
+        footer = tk.Frame(self, bg=st.COLORS["white"])
+        footer.pack(side="bottom", fill="x", padx=30, pady=(4, 12))
+        tk.Button(footer, text="Cancel", command=self.destroy,
+                  **st.BUTTON["secondary"]).pack(side="left")
+        sb = tk.Button(footer, text="Save", command=self._save,
+                       **st.BUTTON["primary"])
+        sb.pack(side="right")
+        st.add_hover(sb, st.COLORS["primary"], st.COLORS["primary_dark"])
         body = tk.Frame(self, bg=st.COLORS["white"])
-        body.pack(fill="both", expand=True, pady=14)
+        body.pack(side="top", fill="both", expand=True, pady=(8, 0))
         self._name = self._field(body, "Vendor / Company Name *")
         self._contact = self._field(body, "Contact Person")
         self._phone = self._field(body, "Phone")
@@ -264,14 +273,6 @@ class VendorDialog(tk.Toplevel):
             body, textvariable=self._msg, font=st.FONTS["small"],
             bg=st.COLORS["white"], fg=st.COLORS["danger"], wraplength=380
         ).pack(padx=30, pady=(0, 6))
-        br = tk.Frame(body, bg=st.COLORS["white"])
-        br.pack(padx=30, fill="x")
-        tk.Button(
-            br, text="Cancel", command=self.destroy, **st.BUTTON["secondary"]
-        ).pack(side="left")
-        sb = tk.Button(br, text="Save", command=self._save, **st.BUTTON["primary"])
-        sb.pack(side="right")
-        st.add_hover(sb, st.COLORS["primary"], st.COLORS["primary_dark"])
 
     def _populate(self, v):
         self._name.set(v["name"] or "")
