@@ -164,18 +164,18 @@ class VendorPortalFrame(tk.Frame):
                 tree.delete(item)
         if self.role == "vendor":
             for row in vs.get_catalog(self.vendor["id"]):
-                self.catalog_tree.insert("", "end", values=(row["medicine_name"], row["unit"],
+                self.catalog_tree.insert("", "end", iid=str(row["id"]), values=(row["medicine_name"], row["unit"],
                     f"{row['wholesale_price']:.2f}", row["available_quantity"], row["expiry_date"]))
             orders = vs.list_orders(vendor_id=self.vendor["id"], role="vendor")
             for row in orders:
-                self.orders_tree.insert("", "end", values=(row["id"], row["pharmacist_name"],
+                self.orders_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["pharmacist_name"],
                     f"{row['total_amount']:.2f}", row["status"], row["created_at"][:16]))
         else:
             for row in vs.get_catalog():
-                self.catalog_tree.insert("", "end", values=(row["id"], row["business_name"],
+                self.catalog_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["business_name"],
                     row["medicine_name"], row["unit"], f"{row['wholesale_price']:.2f}",
                     row["available_quantity"], row["expiry_date"]))
             orders = vs.list_orders(user_id=self.user_id)
             for row in orders:
-                self.orders_tree.insert("", "end", values=(row["id"], row["business_name"],
+                self.orders_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["business_name"],
                     f"{row['total_amount']:.2f}", row["status"], row["created_at"][:16]))
