@@ -123,7 +123,7 @@ class VendorPortalFrame(tk.Frame):
         if not selection:
             messagebox.showwarning("Select a row", "Select a row first.", parent=self)
             return None
-        return int(tree.item(selection[0], "values")[0])
+        return int(selection[0])
 
     def _place_order(self):
         item_id = self._selected_id(self.catalog_tree)
