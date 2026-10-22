@@ -6,6 +6,19 @@ import smtp_handler as smtp
 import styles as st
 
 
+# Curated examples of commonly encountered medicine names; not a universal mandatory list.
+COMMON_MEDICINES = [
+    "Amlodipine", "Amoxicillin", "Azithromycin", "Cetirizine",
+    "Ciprofloxacin", "Diclofenac", "Domperidone", "Doxycycline",
+    "Esomeprazole", "Fluconazole", "Ibuprofen", "Levocetirizine",
+    "Loperamide", "Losartan", "Metformin", "Metoprolol",
+    "Montelukast", "Omeprazole", "Ondansetron", "Pantoprazole",
+    "Paracetamol", "Paracetamol Oral Suspension", "Paracetamol + Caffeine",
+    "ORS (Oral Rehydration Salts)", "Salbutamol", "Vitamin B-Complex",
+    "Vitamin C", "Zinc Tablets",
+]
+
+
 class InventoryFrame(tk.Frame):
     def __init__(self, parent, user_email=""):
         super().__init__(parent, bg=st.COLORS["background"])
@@ -232,6 +245,10 @@ class MedicineDialog(tk.Toplevel):
         self.grab_set()
         self.configure(bg=st.COLORS["white"])
         self._on_save = on_save
+        self._is_edit = medicine is not None
+        self._suggest_popup = None
+        self._suggest_list = None
+        self._suggestions = []
         self._build_ui(title)
         self._center(440, 490)
         if medicine: self._populate(medicine)
@@ -248,7 +265,14 @@ class MedicineDialog(tk.Toplevel):
         tk.Label(f, text=label, font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
         var = tk.StringVar()
-        tk.Entry(f, textvariable=var, **st.ENTRY).pack(fill="x", ipady=7, pady=(4,0))
+        entry = tk.Entry(f, textvariable=var, **st.ENTRY)
+        entry.pack(fill="x", ipady=7, pady=(4,0))
+        if label == "Medicine Name *" and not self._is_edit:
+            self._name_entry = entry
+            var.trace_add("write", lambda *_: self._update_suggestions())
+            entry.bind("<Down>", self._suggest_down)
+            entry.bind("<Escape>", lambda _e: self._close_suggestions())
+            entry.bind("<FocusOut>", lambda _e: self.after(120, self._close_suggestions))
         return var
 
     def _build_ui(self, title):
@@ -276,12 +300,104 @@ class MedicineDialog(tk.Toplevel):
         sb.pack(side="right")
         st.add_hover(sb, st.COLORS["primary"], st.COLORS["primary_dark"])
 
+    def _update_suggestions(self):
+        """Display prefix-ranked, case-insensitive medicine suggestions."""
+        if self._is_edit or not hasattr(self, "_name_entry"):
+            return
+        query = self._name.get().strip().casefold()
+        if not query:
+            self._close_suggestions()
+            return
+        names = set(COMMON_MEDICINES)
+        try:
+            names.update(str(m["name"]).strip() for m in db.get_all_medicines()
+                         if str(m["name"]).strip())
+        except Exception:
+            pass
+        prefix = sorted((n for n in names if n.casefold().startswith(query)),
+                        key=str.casefold)
+        partial = sorted((n for n in names
+                          if query in n.casefold() and not n.casefold().startswith(query)),
+                         key=str.casefold)
+        self._suggestions = (prefix + partial)[:8]
+        if not self._suggestions:
+            self._close_suggestions()
+            return
+        if self._suggest_popup is None or not self._suggest_popup.winfo_exists():
+            self._suggest_popup = tk.Toplevel(self)
+            self._suggest_popup.overrideredirect(True)
+            self._suggest_popup.configure(bg=st.COLORS["white"])
+            self._suggest_list = tk.Listbox(
+                self._suggest_popup, height=min(8, len(self._suggestions)),
+                font=st.FONTS["body"], bg=st.COLORS["white"],
+                fg=st.COLORS["text_dark"], selectbackground=st.COLORS["light_green"],
+                selectforeground=st.COLORS["text_dark"], activestyle="none",
+                relief="solid", bd=1, highlightthickness=0
+            )
+            self._suggest_list.pack(fill="both", expand=True)
+            self._suggest_list.bind("<ButtonRelease-1>", self._choose_suggestion)
+            self._suggest_list.bind("<Return>", self._choose_suggestion)
+            self._suggest_list.bind("<Escape>", lambda _e: self._close_suggestions())
+            self._suggest_list.bind("<Up>", self._suggest_up)
+            self._suggest_list.bind("<Down>", self._suggest_down)
+        self._suggest_list.delete(0, "end")
+        for name in self._suggestions:
+            self._suggest_list.insert("end", name)
+        self._suggest_list.configure(height=min(8, len(self._suggestions)))
+        self._suggest_popup.update_idletasks()
+        x = self._name_entry.winfo_rootx()
+        y = self._name_entry.winfo_rooty() + self._name_entry.winfo_height()
+        width = max(self._name_entry.winfo_width(), 260)
+        height = min(8, len(self._suggestions)) * 24 + 4
+        if y + height > self.winfo_screenheight():
+            y = max(0, self._name_entry.winfo_rooty() - height)
+        self._suggest_popup.geometry(f"{width}x{height}+{x}+{y}")
+        self._suggest_popup.lift()
+
+    def _choose_suggestion(self, _event=None):
+        if self._suggest_list is not None:
+            selection = self._suggest_list.curselection()
+            if selection:
+                self._name.set(self._suggest_list.get(selection[0]))
+                self._close_suggestions()
+                self._name_entry.focus_set()
+                self._name_entry.icursor("end")
+        return "break"
+
+    def _suggest_down(self, _event=None):
+        if self._suggest_list is not None:
+            self._suggest_list.focus_set()
+            if self._suggest_list.size():
+                self._suggest_list.selection_clear(0, "end")
+                self._suggest_list.selection_set(0)
+                self._suggest_list.activate(0)
+        return "break"
+
+    def _suggest_up(self, _event=None):
+        if self._suggest_list is not None and self._suggest_list.size():
+            last = self._suggest_list.size() - 1
+            self._suggest_list.selection_clear(0, "end")
+            self._suggest_list.selection_set(last)
+            self._suggest_list.activate(last)
+        return "break"
+
+    def _close_suggestions(self):
+        if self._suggest_popup is not None:
+            try:
+                if self._suggest_popup.winfo_exists():
+                    self._suggest_popup.destroy()
+            except tk.TclError:
+                pass
+        self._suggest_popup = None
+        self._suggest_list = None
+
     def _populate(self, m):
         self._name.set(m["name"]); self._qty.set(str(m["quantity"]))
         self._price.set(str(m["price"])); self._exp.set(m["expiry_date"])
         self._minst.set(str(m["min_stock"]))
 
     def _save(self):
+        self._close_suggestions()
         try:
             name  = self._name.get().strip()
             qty   = int(self._qty.get().strip())
