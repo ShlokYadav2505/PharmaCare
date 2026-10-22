@@ -29,14 +29,14 @@ class LoginFrame(tk.Frame):
         ).pack(pady=(0, 16))
 
         tk.Label(
-            box, text="Username", font=st.FONTS["body_bold"],
+            box, text="Email Address", font=st.FONTS["body_bold"],
             bg=st.COLORS["white"], fg=st.COLORS["text_dark"],
             anchor="w"
         ).pack(fill="x", padx=40)
-        self._user_var = tk.StringVar()
-        self._user_entry = tk.Entry(box, textvariable=self._user_var, **st.ENTRY)
-        self._user_entry.pack(fill="x", padx=40, ipady=5, pady=(2, 10))
-        self._user_entry.bind("<Return>", lambda e: self._pass_entry.focus())
+        self._email_var = tk.StringVar()
+        self._email_entry = tk.Entry(box, textvariable=self._email_var, **st.ENTRY)
+        self._email_entry.pack(fill="x", padx=40, ipady=5, pady=(2, 10))
+        self._email_entry.bind("<Return>", lambda e: self._pass_entry.focus())
 
         tk.Label(
             box, text="Password", font=st.FONTS["body_bold"],
@@ -82,21 +82,21 @@ class LoginFrame(tk.Frame):
             **st.BUTTON["link"]
         ).pack(side="left", padx=8)
 
-        self._user_entry.focus()
+        self._email_entry.focus()
 
     def _set_msg(self, text, error=True):
         self._msg_var.set(text)
 
     def _do_login(self):
-        u = self._user_var.get().strip()
+        email = self._email_var.get().strip()
         pw = self._pass_var.get()
-        if not u:
-            self._set_msg("Please enter your username.")
+        if not email:
+            self._set_msg("Please enter your email address.")
             return
         if not pw:
             self._set_msg("Please enter your password.")
             return
-        ok, msg, uname = db.validate_login(u, pw)
+        ok, msg, uname = db.validate_login(email, pw)
         if ok:
             self._set_msg("")
             self._on_success(uname)
