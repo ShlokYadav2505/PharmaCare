@@ -39,14 +39,31 @@ class VendorPortalFrame(tk.Frame):
     def _table(self, parent, columns, height=9):
         frame = tk.Frame(parent, bg="white")
         frame.pack(fill="both", expand=True, pady=(8, 10))
-        tree = ttk.Treeview(frame, columns=columns, show="headings", height=height)
+
+        # Extract column identifiers from (identifier, title, width) tuples.
+        column_ids = [col[0] for col in columns]
+
+        tree = ttk.Treeview(
+            frame,
+            columns=column_ids,
+            show="headings",
+            height=height
+        )
+
         for col, title, width in columns:
             tree.heading(col, text=title)
-            tree.column(col, width=width, anchor="w" if col in ("name", "vendor", "status") else "center")
+            tree.column(
+                col,
+                width=width,
+                anchor="w" if col in ("name", "vendor", "status") else "center"
+            )
+
         scroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=scroll.set)
+
         tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
+
         return tree
 
     def _vendor_view(self):

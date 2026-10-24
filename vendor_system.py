@@ -142,6 +142,9 @@ def get_catalog(vendor_id=None):
             JOIN vendor_accounts v ON v.id=c.vendor_id
             WHERE c.available_quantity > 0 AND c.expiry_date >= date('now')
             ORDER BY c.medicine_name""").fetchall()
+        print("PHARMACIST CATALOGUE ROWS:", len(rows))
+        for row in rows:
+            print(dict(row))
     else:
         rows = conn.execute("SELECT * FROM vendor_catalog WHERE vendor_id=? ORDER BY medicine_name", (vendor_id,)).fetchall()
     conn.close()

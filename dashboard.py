@@ -155,7 +155,7 @@ class DashboardApp(tk.Frame):
     def _make_frame(self, key):
         if key == "home":      return HomeFrame(self._content, self._username, self._switch)
         if key == "inventory": return _get_inv()(self._content, user_email=self._user_email)
-        if key == "vendors":   return _get_vend()(self._content)
+        if key == "vendors":   return _get_vend()(self._content, username=self._username)
         if key == "purchases": return _get_purch()(self._content)
         if key == "billing":   return _get_bill()(self._content, user_email=self._user_email)
         if key == "expenses":  return _get_exp()(self._content)

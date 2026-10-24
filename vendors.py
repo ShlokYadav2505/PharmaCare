@@ -4,12 +4,15 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import database as db
 import styles as st
+import vendor_system as vs
 
 
 class VendorsFrame(tk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, username=None):
         super().__init__(parent, bg=st.COLORS["background"])
         self._selected_id = None
+        self._username = username
+        self._user_id = vs.get_user_id(username) if username else None
         self._build_ui()
         self.refresh()
 
@@ -73,6 +76,12 @@ class VendorsFrame(tk.Frame):
         )
         self._hist_btn.pack(side="left")
 
+        self._catalog_btn = tk.Button(
+            bb, text="🛒 View Catalogue", command=self._view_catalogue,
+            state="disabled", **st.BUTTON["primary"]
+        )
+        self._catalog_btn.pack(side="left", padx=(8, 0))
+
         # Treeview
         tf = tk.Frame(self, bg=st.COLORS["white"])
         tf.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 8))
@@ -125,6 +134,7 @@ class VendorsFrame(tk.Frame):
         self._edit_btn.config(state="disabled")
         self._del_btn.config(state="disabled")
         self._hist_btn.config(state="disabled")
+        self._catalog_btn.config(state="disabled")
         rows = data if data is not None else db.get_all_vendors()
         for v in rows:
             self._tree.insert(
@@ -153,11 +163,33 @@ class VendorsFrame(tk.Frame):
             self._edit_btn.config(state="normal")
             self._del_btn.config(state="normal")
             self._hist_btn.config(state="normal")
+            self._catalog_btn.config(state="normal")
         else:
             self._selected_id = None
             self._edit_btn.config(state="disabled")
             self._del_btn.config(state="disabled")
             self._hist_btn.config(state="disabled")
+            self._catalog_btn.config(state="disabled")
+
+    def _view_catalogue(self):
+        if not self._selected_id:
+            return
+        if not self._username or not self._user_id:
+            messagebox.showerror("Supplier Catalogue", "Could not identify the logged-in pharmacist.", parent=self)
+            return
+        vendor = db.get_vendor_by_id(self._selected_id)
+        if not vendor:
+            return
+        # Vendor accounts are separate from legacy pharmacy vendors; link by business name.
+        conn = db.get_connection()
+        row = conn.execute("SELECT id FROM vendor_accounts WHERE lower(trim(business_name))=lower(trim(?))",
+                          (vendor["name"],)).fetchone()
+        conn.close()
+        if not row:
+            messagebox.showinfo("Supplier Catalogue",
+                "This vendor has no registered vendor portal/catalogue account yet.", parent=self)
+            return
+        CatalogueWindow(self.winfo_toplevel(), vendor["name"], row["id"], self._user_id)
 
     def _open_add(self):
         VendorDialog(self.winfo_toplevel(), "Add Vendor", self._handle_add)
@@ -213,6 +245,73 @@ class VendorsFrame(tk.Frame):
         if not v:
             return
         VendorHistoryWindow(self.winfo_toplevel(), v)
+
+
+class CatalogueWindow(tk.Toplevel):
+    """Catalogue for the vendor selected in the existing Vendor Management screen."""
+    def __init__(self, parent, vendor_name, vendor_id, pharmacist_user_id):
+        super().__init__(parent)
+        self.title(f"Supplier Catalogue – {vendor_name}")
+        self.geometry("850x470")
+        self.transient(parent)
+        self.vendor_id = vendor_id
+        self.pharmacist_user_id = pharmacist_user_id
+        self.vendor_name = vendor_name
+        self.configure(bg=st.COLORS["background"])
+        tk.Label(self, text=f"Available medicines – {vendor_name}",
+                 font=st.FONTS["heading"], bg=st.COLORS["background"],
+                 fg=st.COLORS["text_dark"]).pack(anchor="w", padx=16, pady=(14, 8))
+        frame = tk.Frame(self, bg="white")
+        frame.pack(fill="both", expand=True, padx=16, pady=4)
+        cols = ("id", "medicine", "unit", "price", "qty", "expiry")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings", selectmode="browse")
+        for col, title, width in [("id","ID",55),("medicine","Medicine",220),("unit","Unit",100),
+                                  ("price","Wholesale ₹",120),("qty","Available",100),("expiry","Expiry",130)]:
+            self.tree.heading(col, text=title)
+            self.tree.column(col, width=width, anchor="center")
+        self.tree.column("medicine", anchor="w")
+        self.tree.pack(side="left", fill="both", expand=True)
+        scroll=ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set); scroll.pack(side="right", fill="y")
+        bottom=tk.Frame(self, bg=st.COLORS["background"]); bottom.pack(fill="x", padx=16, pady=12)
+        tk.Label(bottom, text="Quantity:", bg=st.COLORS["background"]).pack(side="left")
+        self.quantity=tk.StringVar(value="1")
+        tk.Entry(bottom, textvariable=self.quantity, width=10).pack(side="left", padx=8)
+        self.total=tk.StringVar(value="Select a medicine")
+        tk.Label(bottom, textvariable=self.total, bg=st.COLORS["background"]).pack(side="left", padx=10)
+        tk.Button(bottom, text="Place Request", command=self._place, **st.BUTTON["primary"]).pack(side="right")
+        self.tree.bind("<<TreeviewSelect>>", self._selected)
+        self.refresh()
+
+    def refresh(self):
+        for item in self.tree.get_children(): self.tree.delete(item)
+        for row in vs.get_catalog(self.vendor_id):
+            self.tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["medicine_name"],
+                row["unit"], f"{float(row['wholesale_price']):.2f}", row["available_quantity"], row["expiry_date"]))
+
+    def _selected(self, _=None):
+        sel=self.tree.selection()
+        if not sel: self.total.set("Select a medicine"); return
+        row=self.tree.item(sel[0], "values")
+        try: qty=int(self.quantity.get())
+        except ValueError: qty=0
+        self.total.set(f"Total: ₹{float(row[3])*max(qty,0):.2f}")
+
+    def _place(self):
+        sel=self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Place Request", "Select a medicine first.", parent=self); return
+        try: qty=int(self.quantity.get())
+        except ValueError:
+            messagebox.showerror("Place Request", "Quantity must be a whole number.", parent=self); return
+        if qty < 1:
+            messagebox.showerror("Place Request", "Quantity must be at least 1.", parent=self); return
+        item_id=int(sel[0])
+        ok, result=vs.create_order(self.pharmacist_user_id, self.vendor_id, item_id, qty)
+        if not ok:
+            messagebox.showerror("Request failed", str(result), parent=self); return
+        messagebox.showinfo("Request placed", f"Purchase request #{result} sent to {self.vendor_name}.", parent=self)
+        self.refresh()
 
 
 class VendorDialog(tk.Toplevel):
