@@ -224,16 +224,18 @@ def transition_order(order_id, action, actor_role, actor_id, receive_quantity=No
 
         status = order["status"]
         if action == "confirm" and actor_role == "vendor" and status == "Pending":
+            new_status = "Confirmed"
+        elif action == "dispatch" and actor_role == "vendor" and status == "Confirmed":
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
+            # Deduct wholesale stock at dispatch, not at confirmation.
             for item in items:
-                stock = conn.execute("SELECT available_quantity FROM vendor_catalog WHERE id=?", (item["catalog_id"],)).fetchone()
+                stock = conn.execute("SELECT available_quantity FROM vendor_catalog WHERE id=?",
+                                    (item["catalog_id"],)).fetchone()
                 if not stock or stock["available_quantity"] < item["quantity"]:
-                    return False, "Vendor stock changed; the order cannot be confirmed."
+                    return False, "Vendor stock changed; the order cannot be dispatched."
             for item in items:
                 conn.execute("UPDATE vendor_catalog SET available_quantity=available_quantity-?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                              (item["quantity"], item["catalog_id"]))
-            new_status = "Confirmed"
-        elif action == "dispatch" and actor_role == "vendor" and status == "Confirmed":
             new_status = "Dispatched"
         elif action == "receive" and actor_role == "pharmacist" and status in ("Dispatched", "Partially Received"):
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
