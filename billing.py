@@ -259,7 +259,10 @@ class BillingFrame(tk.Frame):
             messagebox.showwarning("Empty", "Add at least one medicine.",
                                    parent=self.winfo_toplevel()); return
         bill_no = self._bill_no.get()
-        cust    = self._cust.get().strip()\n        if not cust or "@" not in cust or "." not in cust.split("@")[-1]:\n            messagebox.showerror("Customer Email", "Enter a valid customer email address.", parent=self.winfo_toplevel())\n            return
+        cust    = self._cust.get().strip()
+        if not cust or "@" not in cust or "." not in cust.split("@")[-1]:
+            messagebox.showerror("Customer Email", "Enter a valid customer email address.", parent=self.winfo_toplevel())
+            return
         try:
             disc = max(float(self._disc_var.get() or 0), 0)
         except ValueError:
