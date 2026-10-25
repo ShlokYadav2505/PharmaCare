@@ -120,7 +120,7 @@ class BillingFrame(tk.Frame):
         tk.Entry(body, textvariable=self._bill_no, state="readonly", **st.ENTRY
                  ).pack(fill="x", ipady=6, pady=(4,12))
 
-        tk.Label(body, text="Customer Email", font=st.FONTS["body_bold"],
+        tk.Label(body, text="Customer Email (receipt sent here)", font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
         self._cust = tk.StringVar(value="")
         tk.Entry(body, textvariable=self._cust, **st.ENTRY).pack(fill="x", ipady=6, pady=(4,16))
@@ -271,7 +271,7 @@ class BillingFrame(tk.Frame):
         total = max(sub - disc, 0)
 
         if not messagebox.askyesno("Confirm Bill",
-            f"Bill: {bill_no}\nCustomer: {cust}\n"
+            f"Bill: {bill_no}\nReceipt email: {cust}\n"
             f"Items: {len(self._items)}\nTotal: ₹{total:.2f}\n\nGenerate?",
             parent=self.winfo_toplevel()): return
 
@@ -318,12 +318,23 @@ class BillingFrame(tk.Frame):
         )
         receipt_html = (
             f"<h2>PharmaCare Receipt</h2><p>Bill: {bill_no}</p>"
-            f"<p>Customer: {cust}</p><table border='1' cellpadding='6'>"
+            f"<p>Receipt emailed to: {cust}</p><table border='1' cellpadding='6'>"
             "<tr><th>Medicine</th><th>Qty</th><th>Price</th><th>Total</th></tr>"
             f"{receipt_rows}</table><p>Subtotal: ₹{sub:.2f}</p>"
             f"<p>Discount: ₹{disc:.2f}</p><h3>Total: ₹{total:.2f}</h3>"
         )
-        smtp.send_email_async(cust, f"PharmaCare receipt {bill_no}", smtp._wrap(receipt_html))
+        def receipt_email_result(ok, msg):
+            # Email callbacks run on a worker thread; schedule Tk updates on the UI thread.
+            self.after(0, lambda: messagebox.showinfo(
+                "Receipt Email" if ok else "Receipt Email Failed",
+                f"{msg}\\nRecipient: {cust}",
+                parent=self.winfo_toplevel()
+            ))
+
+        smtp.send_email_async(
+            cust, f"PharmaCare receipt {bill_no}",
+            smtp._wrap(receipt_html), callback=receipt_email_result
+        )
         if low_stock_meds and self._user_email:
             smtp.send_low_stock_alert(self._user_email, low_stock_meds)
         self._clear()
