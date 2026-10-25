@@ -279,6 +279,27 @@ def transition_order(order_id, action, actor_role, actor_id, receive_quantity=No
                                (item["medicine_name"],)).fetchone()
             if med:
                 medicine_id = med["id"]
+                # Preserve existing stock if it predates batch tracking.
+                batch_count = conn.execute(
+                    "SELECT COUNT(*) FROM batches WHERE medicine_id=?", (medicine_id,)
+                ).fetchone()[0]
+                if batch_count == 0:
+                    legacy = conn.execute(
+                        "SELECT quantity, expiry_date FROM medicines WHERE id=?", (medicine_id,)
+                    ).fetchone()
+                    legacy_expiry = (legacy["expiry_date"] or "").strip()
+                    try:
+                        datetime.strptime(legacy_expiry, "%Y-%m-%d")
+                    except (TypeError, ValueError):
+                        legacy_expiry = ""
+                    if int(legacy["quantity"]) > 0 and legacy_expiry:
+                        conn.execute(
+                            """INSERT INTO batches
+                               (medicine_id,batch_number,quantity,cost_price,expiry_date)
+                               VALUES (?,?,?,?,?)""",
+                            (medicine_id, f"LEGACY-PO-{order_id}", int(legacy["quantity"]),
+                             0.0, legacy_expiry)
+                        )
             else:
                 cur = conn.execute("""INSERT INTO medicines(name,quantity,price,expiry_date,min_stock)
                     VALUES (?,0,?, ?,10)""", (item["medicine_name"], item["unit_price"], item["expiry_date"]))
