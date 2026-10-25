@@ -422,7 +422,7 @@ class VendorOrderHistory(tk.Toplevel):
         for order in orders:
             items=vs.get_order_items(order["id"])
             if not items:
-                self.tree.insert("","end",values=(order["id"],"—","—","—",f"{float(order['total_amount']):.2f}",order["status"],str(order["created_at"] or "")[:16]))
+                self.tree.insert("","end",values=(order["id"],"—","—","—",f"{float(item['quantity']) * float(item['unit_price']):.2f}",order["status"],str(order["created_at"] or "")[:16]))
             for item in items:
                 self.tree.insert("","end",values=(order["id"],item["medicine_name"],item["quantity"],item["received_quantity"],f"{float(order['total_amount']):.2f}",order["status"],str(order["created_at"] or "")[:16]))
         footer=tk.Frame(self,bg=st.COLORS["background"]); footer.pack(fill="x",padx=16,pady=12)
