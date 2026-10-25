@@ -4,7 +4,7 @@ from datetime import datetime
 import database as db
 import styles as st
 
-_inv_cls = _bill_cls = _rep_cls = _vend_cls = _purch_cls = _exp_cls = None
+_inv_cls = _bill_cls = _rep_cls = _vend_cls = _exp_cls = None
 
 def _get_inv():
     global _inv_cls
@@ -30,12 +30,6 @@ def _get_vend():
         from vendors import VendorsFrame; _vend_cls = VendorsFrame
     return _vend_cls
 
-def _get_purch():
-    global _purch_cls
-    if not _purch_cls:
-        from purchases import PurchasesFrame; _purch_cls = PurchasesFrame
-    return _purch_cls
-
 def _get_exp():
     global _exp_cls
     if not _exp_cls:
@@ -45,7 +39,7 @@ def _get_exp():
 
 class DashboardApp(tk.Frame):
     NAV = [("🏠","Dashboard","home"),("💊","Inventory","inventory"),
-           ("🏢","Vendors","vendors"),("📦","Purchases","purchases"),
+           ("🏢","Vendors","vendors"),
            ("🧾","Billing","billing"),("💸","Expenses","expenses"),
            ("📊","Reports","reports")]
 
@@ -156,7 +150,6 @@ class DashboardApp(tk.Frame):
         if key == "home":      return HomeFrame(self._content, self._username, self._switch)
         if key == "inventory": return _get_inv()(self._content, user_email=self._user_email)
         if key == "vendors":   return _get_vend()(self._content, username=self._username)
-        if key == "purchases": return _get_purch()(self._content)
         if key == "billing":   return _get_bill()(self._content, user_email=self._user_email)
         if key == "expenses":  return _get_exp()(self._content)
         if key == "reports":   return _get_rep()(self._content)
@@ -246,7 +239,6 @@ class HomeFrame(tk.Frame):
 
         for label, nav in [
             ("Add Medicine", "inventory"),
-            ("Add Stock", "purchases"),
             ("New Bill", "billing"),
             ("Reports", "reports"),
         ]:
