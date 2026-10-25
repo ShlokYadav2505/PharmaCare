@@ -76,6 +76,12 @@ class VendorsFrame(tk.Frame):
         )
         self._catalog_btn.pack(side="left", padx=(8, 0))
 
+        self._history_btn = tk.Button(
+            bb, text="📋 Order History", command=self._show_order_history,
+            state="disabled", **st.BUTTON["secondary"]
+        )
+        self._history_btn.pack(side="left", padx=(8, 0))
+
         # Treeview
         tf = tk.Frame(self, bg=st.COLORS["white"])
         tf.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 8))
@@ -128,6 +134,7 @@ class VendorsFrame(tk.Frame):
         self._edit_btn.config(state="disabled")
         self._del_btn.config(state="disabled")
         self._catalog_btn.config(state="disabled")
+        self._history_btn.config(state="disabled")
         rows = data if data is not None else db.get_all_vendors()
         for v in rows:
             self._tree.insert(
@@ -156,11 +163,28 @@ class VendorsFrame(tk.Frame):
             self._edit_btn.config(state="normal")
             self._del_btn.config(state="normal")
             self._catalog_btn.config(state="normal")
+            self._history_btn.config(state="normal")
         else:
             self._selected_id = None
             self._edit_btn.config(state="disabled")
             self._del_btn.config(state="disabled")
             self._catalog_btn.config(state="disabled")
+            self._history_btn.config(state="disabled")
+
+    def _show_order_history(self):
+        if not self._selected_id or not self._user_id:
+            return
+        vendor = db.get_vendor_by_id(self._selected_id)
+        if not vendor:
+            return
+        conn = db.get_connection()
+        row = conn.execute("SELECT id FROM vendor_accounts WHERE lower(trim(business_name))=lower(trim(?))", (vendor["name"],)).fetchone()
+        conn.close()
+        if not row:
+            messagebox.showinfo("Order History", "This vendor has no vendor portal account.", parent=self)
+            return
+        orders = [o for o in vs.list_orders(user_id=self._user_id, role="pharmacist") if o["vendor_id"] == row["id"]]
+        VendorOrderHistory(self.winfo_toplevel(), vendor["name"], orders)
 
     def _view_catalogue(self):
         if not self._selected_id:
@@ -375,3 +399,32 @@ class VendorDialog(tk.Toplevel):
             self._address.get().strip()
         )
         self.destroy()
+
+
+class VendorOrderHistory(tk.Toplevel):
+    """Read-only history of vendor portal orders for the selected supplier."""
+    def __init__(self, parent, vendor_name, orders):
+        super().__init__(parent)
+        self.title(f"Order History – {vendor_name}")
+        self.geometry("850x500")
+        self.transient(parent)
+        self.configure(bg=st.COLORS["background"])
+        tk.Label(self, text=f"Orders from {vendor_name}", font=st.FONTS["heading"],
+                 bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).pack(anchor="w", padx=16, pady=12)
+        frame=tk.Frame(self, bg=st.COLORS["white"]); frame.pack(fill="both", expand=True, padx=16, pady=4)
+        cols=("order","medicine","qty","received","total","status","placed")
+        self.tree=ttk.Treeview(frame,columns=cols,show="headings",selectmode="browse")
+        for c,h,w in [("order","Order #",70),("medicine","Medicine",180),("qty","Ordered",80),("received","Received",80),("total","Total ₹",100),("status","Status",130),("placed","Placed",150)]:
+            self.tree.heading(c,text=h); self.tree.column(c,width=w,anchor="center")
+        self.tree.column("medicine",anchor="w")
+        self.tree.pack(side="left",fill="both",expand=True)
+        sb=ttk.Scrollbar(frame,orient="vertical",command=self.tree.yview); self.tree.configure(yscrollcommand=sb.set); sb.pack(side="right",fill="y")
+        for order in orders:
+            items=vs.get_order_items(order["id"])
+            if not items:
+                self.tree.insert("","end",values=(order["id"],"—","—","—",f"{float(order['total_amount']):.2f}",order["status"],str(order["created_at"] or "")[:16]))
+            for item in items:
+                self.tree.insert("","end",values=(order["id"],item["medicine_name"],item["quantity"],item["received_quantity"],f"{float(order['total_amount']):.2f}",order["status"],str(order["created_at"] or "")[:16]))
+        footer=tk.Frame(self,bg=st.COLORS["background"]); footer.pack(fill="x",padx=16,pady=12)
+        tk.Label(footer,text=f"{len(orders)} order(s)",bg=st.COLORS["background"],fg=st.COLORS["text_light"]).pack(side="left")
+        tk.Button(footer,text="Close",command=self.destroy,**st.BUTTON["primary"]).pack(side="right")
