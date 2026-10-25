@@ -70,12 +70,6 @@ class VendorsFrame(tk.Frame):
         self._del_btn.pack(side="left", padx=(0, 8))
         st.add_hover(self._del_btn, st.COLORS["danger"], "#B71C1C")
 
-        self._hist_btn = tk.Button(
-            bb, text="📋 Purchase History", command=self._show_history,
-            state="disabled", **st.BUTTON["secondary"]
-        )
-        self._hist_btn.pack(side="left")
-
         self._catalog_btn = tk.Button(
             bb, text="🛒 View Catalogue", command=self._view_catalogue,
             state="disabled", **st.BUTTON["primary"]
@@ -133,7 +127,6 @@ class VendorsFrame(tk.Frame):
         self._selected_id = None
         self._edit_btn.config(state="disabled")
         self._del_btn.config(state="disabled")
-        self._hist_btn.config(state="disabled")
         self._catalog_btn.config(state="disabled")
         rows = data if data is not None else db.get_all_vendors()
         for v in rows:
@@ -162,13 +155,11 @@ class VendorsFrame(tk.Frame):
             self._selected_id = int(sel[0])
             self._edit_btn.config(state="normal")
             self._del_btn.config(state="normal")
-            self._hist_btn.config(state="normal")
             self._catalog_btn.config(state="normal")
         else:
             self._selected_id = None
             self._edit_btn.config(state="disabled")
             self._del_btn.config(state="disabled")
-            self._hist_btn.config(state="disabled")
             self._catalog_btn.config(state="disabled")
 
     def _view_catalogue(self):
@@ -237,15 +228,6 @@ class VendorsFrame(tk.Frame):
                 messagebox.showinfo("Deleted", msg, parent=self.winfo_toplevel())
             else:
                 messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
-
-    def _show_history(self):
-        if not self._selected_id:
-            return
-        v = db.get_vendor_by_id(self._selected_id)
-        if not v:
-            return
-        VendorHistoryWindow(self.winfo_toplevel(), v)
-
 
 class CatalogueWindow(tk.Toplevel):
     """Catalogue for the vendor selected in the existing Vendor Management screen."""
@@ -393,71 +375,3 @@ class VendorDialog(tk.Toplevel):
             self._address.get().strip()
         )
         self.destroy()
-
-
-class VendorHistoryWindow(tk.Toplevel):
-    def __init__(self, parent, vendor):
-        super().__init__(parent)
-        self.title(f"Purchase History – {vendor['name']}")
-        self.resizable(True, True)
-        self.grab_set()
-        self.configure(bg=st.COLORS["white"])
-        self._build(vendor)
-        self.geometry("700x420")
-        self._center(700, 420)
-
-    def _center(self, w, h):
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - w) // 2
-        y = (self.winfo_screenheight() - h) // 2
-        self.geometry(f"{w}x{h}+{x}+{y}")
-
-    def _build(self, vendor):
-        hdr = tk.Frame(self, bg=st.COLORS["primary_dark"])
-        hdr.pack(fill="x")
-        tk.Label(
-            hdr, text=f"📋  Purchases from {vendor['name']}",
-            font=st.FONTS["subheading"],
-            bg=st.COLORS["primary_dark"], fg=st.COLORS["white"]
-        ).pack(pady=12)
-
-        tf = tk.Frame(self, bg=st.COLORS["white"])
-        tf.pack(fill="both", expand=True, padx=12, pady=12)
-        tf.columnconfigure(0, weight=1)
-        tf.rowconfigure(0, weight=1)
-
-        sty = ttk.Style()
-        st.apply_treeview_style(sty, "VHist.Treeview")
-        cols = ("id", "invoice", "date", "total")
-        tree = ttk.Treeview(
-            tf, columns=cols, show="headings",
-            style="VHist.Treeview", selectmode="browse"
-        )
-        for col, hd, w in [
-            ("id", "ID", 50), ("invoice", "Invoice", 140),
-            ("date", "Date", 110), ("total", "Total (₹)", 110)
-        ]:
-            tree.heading(col, text=hd)
-            tree.column(col, width=w, anchor="center")
-        vsb = ttk.Scrollbar(tf, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
-        tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-
-        rows = db.get_purchases_by_vendor(vendor["id"])
-        for p in rows:
-            tree.insert(
-                "", "end",
-                values=(
-                    p["id"], p["invoice_number"] or "—",
-                    p["purchase_date"], f"₹{p['total_amount']:.2f}"
-                )
-            )
-        tk.Label(
-            self, text=f"{len(rows)} purchase(s)",
-            font=st.FONTS["small"], bg=st.COLORS["white"],
-            fg=st.COLORS["text_light"]
-        ).pack(pady=(0, 8))
-        tk.Button(
-            self, text="Close", command=self.destroy, **st.BUTTON["primary"]
-        ).pack(pady=(0, 12))
