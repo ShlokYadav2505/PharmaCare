@@ -120,9 +120,9 @@ class BillingFrame(tk.Frame):
         tk.Entry(body, textvariable=self._bill_no, state="readonly", **st.ENTRY
                  ).pack(fill="x", ipady=6, pady=(4,12))
 
-        tk.Label(body, text="Customer Name", font=st.FONTS["body_bold"],
+        tk.Label(body, text="Customer Email", font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
-        self._cust = tk.StringVar(value="Walk-in Customer")
+        self._cust = tk.StringVar(value="")
         tk.Entry(body, textvariable=self._cust, **st.ENTRY).pack(fill="x", ipady=6, pady=(4,16))
 
         tk.Frame(body, bg=st.COLORS["border"], height=1).pack(fill="x", pady=4)
@@ -259,7 +259,7 @@ class BillingFrame(tk.Frame):
             messagebox.showwarning("Empty", "Add at least one medicine.",
                                    parent=self.winfo_toplevel()); return
         bill_no = self._bill_no.get()
-        cust    = self._cust.get().strip() or "Walk-in Customer"
+        cust    = self._cust.get().strip()\n        if not cust or "@" not in cust or "." not in cust.split("@")[-1]:\n            messagebox.showerror("Customer Email", "Enter a valid customer email address.", parent=self.winfo_toplevel())\n            return
         try:
             disc = max(float(self._disc_var.get() or 0), 0)
         except ValueError:
@@ -307,6 +307,20 @@ class BillingFrame(tk.Frame):
 
         ReceiptWindow(self.winfo_toplevel(), bill_no, cust,
                       self._items, sub, disc, total)
+        # Email the completed receipt to the customer (best effort).
+        receipt_rows = "".join(
+            f"<tr><td>{item['name']}</td><td>{item['qty']}</td>"
+            f"<td>₹{item['price']:.2f}</td><td>₹{item['total']:.2f}</td></tr>"
+            for item in self._items
+        )
+        receipt_html = (
+            f"<h2>PharmaCare Receipt</h2><p>Bill: {bill_no}</p>"
+            f"<p>Customer: {cust}</p><table border='1' cellpadding='6'>"
+            "<tr><th>Medicine</th><th>Qty</th><th>Price</th><th>Total</th></tr>"
+            f"{receipt_rows}</table><p>Subtotal: ₹{sub:.2f}</p>"
+            f"<p>Discount: ₹{disc:.2f}</p><h3>Total: ₹{total:.2f}</h3>"
+        )
+        smtp.send_email_async(cust, f"PharmaCare receipt {bill_no}", smtp._wrap(receipt_html))
         if low_stock_meds and self._user_email:
             smtp.send_low_stock_alert(self._user_email, low_stock_meds)
         self._clear()
