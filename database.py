@@ -133,7 +133,15 @@ def initialize_database():
             "SELECT COUNT(*) FROM batches WHERE medicine_id=?", (m["id"],)
         ).fetchone()[0]
         if cnt == 0:
-            exp = m["expiry_date"] or (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+            # Preserve the expiry date already recorded for this medicine.
+            # Never invent an expiry date for legacy stock.
+            exp = (m["expiry_date"] or "").strip()
+            try:
+                datetime.strptime(exp, "%Y-%m-%d")
+            except (TypeError, ValueError):
+                # Keep the legacy quantity untouched; it requires pharmacist
+                # verification before it can be represented as an expiry-tracked batch.
+                continue
             cur.execute(
                 """INSERT INTO batches (medicine_id, batch_number, quantity, cost_price, expiry_date)
                    VALUES (?, ?, ?, ?, ?)""",
