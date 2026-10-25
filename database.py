@@ -247,10 +247,55 @@ def add_medicine(name, quantity, price, expiry_date, min_stock):
 
 
 def get_all_medicines():
+    """
+    Return the pharmacy's medicine catalogue.
+
+    Repair quantity/batch inconsistencies before returning rows. Existing legacy
+    stock is preserved when it has no batch records; it is never overwritten
+    with zero merely because batch tracking was introduced later.
+    """
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM medicines ORDER BY name").fetchall()
-    conn.close()
-    return rows
+    try:
+        cur = conn.cursor()
+        medicines = cur.execute(
+            "SELECT * FROM medicines ORDER BY name"
+        ).fetchall()
+
+        for medicine in medicines:
+            mid = medicine["id"]
+            batch_count = cur.execute(
+                "SELECT COUNT(*) FROM batches WHERE medicine_id=?", (mid,)
+            ).fetchone()[0]
+
+            # For legacy medicines that have quantity but no batches, create a
+            # batch only when the recorded expiry date is valid. Keep the legacy
+            # quantity untouched if expiry needs pharmacist verification.
+            if batch_count == 0 and int(medicine["quantity"] or 0) > 0:
+                expiry = (medicine["expiry_date"] or "").strip()
+                try:
+                    datetime.strptime(expiry, "%Y-%m-%d")
+                except (TypeError, ValueError):
+                    continue
+                cur.execute(
+                    """INSERT INTO batches
+                       (medicine_id, batch_number, quantity, cost_price, expiry_date)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (mid, "LEGACY-001", int(medicine["quantity"]), 0.0, expiry)
+                )
+                batch_count = 1
+
+            # Only batch-backed records are synchronized. This prevents an empty
+            # batch table from erasing old inventory.
+            if batch_count > 0:
+                _sync_medicine_quantity(conn, mid)
+
+        conn.commit()
+        rows = cur.execute(
+            "SELECT * FROM medicines ORDER BY name"
+        ).fetchall()
+        return rows
+    finally:
+        conn.close()
 
 
 def get_medicine_by_id(mid):
