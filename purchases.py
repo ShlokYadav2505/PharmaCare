@@ -195,7 +195,7 @@ class PurchasesFrame(tk.Frame):
             bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
         ).pack(side="left")
         rb = tk.Button(
-            lbl_row, text="🗑 Remove", command=self._remove_line, **st.BUTTON["sm_danger"]
+            lbl_row, text="Remove", command=self._remove_line, **st.BUTTON["sm_danger"]
         )
         rb.pack(side="right")
 
@@ -271,7 +271,7 @@ class PurchasesFrame(tk.Frame):
         st.add_hover(gb, st.COLORS["primary"], st.COLORS["primary_dark"])
 
         cb = tk.Button(
-            body, text="🗑  Clear", command=self._clear, **st.BUTTON["danger"]
+            body, text="Clear", command=self._clear, **st.BUTTON["danger"]
         )
         cb.pack(fill="x")
         st.add_hover(cb, st.COLORS["danger"], "#B71C1C")

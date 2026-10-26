@@ -38,17 +38,13 @@ class InventoryFrame(tk.Frame):
         tk.Label(top, text="Inventory Management", font=st.FONTS["heading"],
                  bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).grid(row=0, column=0, sticky="w")
 
-        sf = tk.Frame(top, bg=st.COLORS["white"],
-                      highlightbackground=st.COLORS["entry_border"], highlightthickness=1)
+        sf = tk.Frame(top, bg=st.COLORS["background"])
         sf.grid(row=0, column=1, sticky="e", padx=(20,0))
-        tk.Label(sf, text="🔍", bg=st.COLORS["white"],
-                 fg=st.COLORS["text_light"], font=("Calibri",12)).pack(side="left", padx=(8,0))
+        tk.Label(sf, text="Search:", bg=st.COLORS["background"]).pack(side="left", padx=(0, 6))
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", lambda *_: self._do_search())
-        se = tk.Entry(sf, textvariable=self._search_var, font=st.FONTS["entry"],
-                      bg=st.COLORS["white"], fg=st.COLORS["text_dark"],
-                      relief="flat", bd=0, width=26)
-        se.pack(side="left", ipady=6, padx=(4,8))
+        se = tk.Entry(sf, textvariable=self._search_var, width=26)
+        se.pack(side="left")
 
         # Buttons
         bb = tk.Frame(self, bg=st.COLORS["background"])
@@ -59,23 +55,23 @@ class InventoryFrame(tk.Frame):
         add.pack(side="left", padx=(0,8))
         st.add_hover(add, st.COLORS["primary"], st.COLORS["primary_dark"])
 
-        self._edit_btn = tk.Button(bb, text="✏ Edit",
+        self._edit_btn = tk.Button(bb, text="Edit",
                                    command=self._open_edit,
                                    state="disabled", **st.BUTTON["secondary"])
         self._edit_btn.pack(side="left", padx=(0,8))
 
-        self._del_btn = tk.Button(bb, text="🗑 Delete",
+        self._del_btn = tk.Button(bb, text="Delete",
                                   command=self._do_delete,
                                   state="disabled", **st.BUTTON["danger"])
         self._del_btn.pack(side="left")
         st.add_hover(self._del_btn, st.COLORS["danger"], "#B71C1C")
 
-        ab = tk.Button(bb, text="📧 Low Stock Alert",
+        ab = tk.Button(bb, text="Low Stock Alert",
                        command=self._alert_low, **st.BUTTON["warning"])
         ab.pack(side="right", padx=(8,0))
         st.add_hover(ab, st.COLORS["warning"], "#BF360C")
 
-        eb = tk.Button(bb, text="📧 Expiry Alert",
+        eb = tk.Button(bb, text="Expiry Alert",
                        command=self._alert_expired, **st.BUTTON["sm_danger"])
         eb.pack(side="right", padx=(8,0))
         st.add_hover(eb, st.COLORS["danger"], "#B71C1C")

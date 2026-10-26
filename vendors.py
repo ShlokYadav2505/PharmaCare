@@ -29,23 +29,13 @@ class VendorsFrame(tk.Frame):
             bg=st.COLORS["background"], fg=st.COLORS["text_dark"]
         ).grid(row=0, column=0, sticky="w")
 
-        sf = tk.Frame(
-            top, bg=st.COLORS["white"],
-            highlightbackground=st.COLORS["entry_border"], highlightthickness=1
-        )
+        sf = tk.Frame(top, bg=st.COLORS["background"])
         sf.grid(row=0, column=1, sticky="e", padx=(20, 0))
-        tk.Label(
-            sf, text="🔍", bg=st.COLORS["white"],
-            fg=st.COLORS["text_light"], font=("Calibri", 12)
-        ).pack(side="left", padx=(8, 0))
+        tk.Label(sf, text="Search:", bg=st.COLORS["background"]).pack(side="left", padx=(0, 6))
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", lambda *_: self._do_search())
-        se = tk.Entry(
-            sf, textvariable=self._search_var, font=st.FONTS["entry"],
-            bg=st.COLORS["white"], fg=st.COLORS["text_dark"],
-            relief="flat", bd=0, width=26
-        )
-        se.pack(side="left", ipady=6, padx=(4, 8))
+        se = tk.Entry(sf, textvariable=self._search_var, width=26)
+        se.pack(side="left")
 
         # Buttons
         bb = tk.Frame(self, bg=st.COLORS["background"])
@@ -58,13 +48,13 @@ class VendorsFrame(tk.Frame):
         st.add_hover(add, st.COLORS["primary"], st.COLORS["primary_dark"])
 
         self._edit_btn = tk.Button(
-            bb, text="✏ Edit", command=self._open_edit,
+            bb, text="Edit", command=self._open_edit,
             state="disabled", **st.BUTTON["secondary"]
         )
         self._edit_btn.pack(side="left", padx=(0, 8))
 
         self._del_btn = tk.Button(
-            bb, text="🗑 Delete", command=self._do_delete,
+            bb, text="Delete", command=self._do_delete,
             state="disabled", **st.BUTTON["danger"]
         )
         self._del_btn.pack(side="left", padx=(0, 8))
@@ -77,7 +67,7 @@ class VendorsFrame(tk.Frame):
         self._catalog_btn.pack(side="left", padx=(8, 0))
 
         self._history_btn = tk.Button(
-            bb, text="📋 Order History", command=self._show_order_history,
+            bb, text="Order History", command=self._show_order_history,
             state="disabled", **st.BUTTON["secondary"]
         )
         self._history_btn.pack(side="left", padx=(8, 0))
@@ -325,12 +315,11 @@ class CatalogueWindow(tk.Toplevel):
             messagebox.showerror("Request failed", str(result), parent=self); return
         if self.pharmacist_username:
             user = db.get_user_by_username(self.pharmacist_username)
-            if user and user["email"]:
-                vs.send_order_receipt(result, user["email"])
+            vs.notify_order_placed(result, user["email"] if user else "")
         messagebox.showinfo(
             "Request placed",
             f"Purchase request #{result} sent to {self.vendor_name}."
-            + (" An email receipt will be sent if SMTP is configured." if self.pharmacist_username else ""),
+            + (" Email notifications will be sent if SMTP is configured." if self.pharmacist_username else ""),
             parent=self,
         )
         self.refresh()
