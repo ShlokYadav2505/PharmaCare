@@ -143,7 +143,7 @@ class ReportsFrame(tk.Frame):
         elif self._current in ("purchases", "vendor_hist"):
             invoices.open_invoice(self.winfo_toplevel(), "purchase", values[0])
         else:
-            messagebox.showinfo("Invoice view", "Open Sales or Purchases and select a row.",
+            messagebox.showinfo("Invoice view", "Select a sales or purchase row in Reports.",
                                 parent=self.winfo_toplevel())
 
     def _quick(self, days):
