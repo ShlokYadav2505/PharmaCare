@@ -41,7 +41,6 @@ def _invoice_lines(invoice, kind):
             f"Pharmacist: {invoice.get('pharmacist_name') or '—'} | {invoice.get('pharmacist_email') or '—'}",
             f"Customer: {invoice.get('customer_name') or 'Walk-in Customer'}",
             f"Customer email: {invoice.get('customer_email') or '—'}",
-            f"Customer address: {invoice.get('customer_address') or '—'}",
         ])
 
     lines.extend(["", "MEDICINE DETAILS"])
@@ -76,7 +75,7 @@ def _invoice_lines(invoice, kind):
             lines.append(
                 f"  Qty {qty} x {_money(unit_price)} | Subtotal {_money(subtotal)} | "
                 f"Discount {_money(discount)} | Taxable {_money(taxable)} | "
-                f"GST {float(item.get('gst_rate', 0) or 0):g}% ({invoice.get('gst_mode', 'local')}) "
+                f"GST {float(item.get('gst_rate', 0) or 0):g}% "
                 f"{_money(tax)} | Line total {_money(taxable + tax)}"
             )
 
@@ -86,11 +85,15 @@ def _invoice_lines(invoice, kind):
         lines.append(f"Discount: {_money(invoice.get('discount_amount'))}")
     lines.append(f"CGST: {_money(invoice.get('cgst_amount'))}")
     lines.append(f"SGST: {_money(invoice.get('sgst_amount'))}")
-    lines.append(f"IGST: {_money(invoice.get('igst_amount'))}")
-    lines.append(f"GST rate: {float(invoice.get('gst_rate', 0) or 0):g}% ({invoice.get('gst_mode', 'local')})")
+    if purchase:
+        lines.append(f"IGST: {_money(invoice.get('igst_amount'))}")
+        lines.append(f"GST rate: {float(invoice.get('gst_rate', 0) or 0):g}% ({invoice.get('gst_mode', 'local')})")
+    else:
+        lines.append(f"GST rate: {float(invoice.get('gst_rate', 0) or 0):g}%")
     total = invoice.get("total_amount") if purchase else invoice.get("grand_total")
     lines.append(f"GRAND TOTAL: {_money(total)}")
-    lines.append(f"Payment method: {invoice.get('payment_method') or '—'}")
+    if purchase:
+        lines.append(f"Payment method: {invoice.get('payment_method') or '—'}")
     lines.append(f"Payment status: {invoice.get('payment_status') or '—'}")
     if purchase and invoice.get("notes"):
         lines.extend(["", f"Notes: {invoice['notes']}"])
@@ -119,16 +122,15 @@ def invoice_email_html(invoice):
         f"<p><b>Date:</b> {escape(invoice.get('invoice_date', ''))} | "
         f"<b>Customer:</b> {escape(invoice.get('customer_name') or 'Walk-in Customer')}</p>"
         "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse'>"
-        "<tr><th>Medicine / Batch</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>GST</th><th>Total</th></tr>"
+        f"<tr><th>Medicine / Batch</th><th>Qty</th><th>Unit Price</th><th>Discount</th>"
+        f"<th>GST ({float(invoice.get('gst_rate', 0) or 0):g}%)</th><th>Total</th></tr>"
         + "".join(rows) + "</table>"
         f"<p>Subtotal: {_money(invoice.get('subtotal'))}<br>"
         f"Discount: {_money(invoice.get('discount_amount'))}<br>"
         f"CGST: {_money(invoice.get('cgst_amount'))}<br>"
         f"SGST: {_money(invoice.get('sgst_amount'))}<br>"
-        f"IGST: {_money(invoice.get('igst_amount'))}<br>"
         f"<b>Grand Total: {_money(invoice.get('grand_total'))}</b><br>"
-        f"Payment: {escape(invoice.get('payment_method') or '—')} / "
-        f"{escape(invoice.get('payment_status') or '—')}</p>"
+        f"Payment status: {escape(invoice.get('payment_status') or '—')}</p>"
     )
 
 
@@ -261,15 +263,23 @@ class InvoiceDetailWindow(tk.Toplevel):
 
         total = self.invoice.get("total_amount") if self.kind == "purchase" else self.invoice.get("grand_total")
         discount = 0.0 if self.kind == "purchase" else self.invoice.get("discount_amount", 0)
-        summary = (
-            f"Subtotal: {_money(self.invoice.get('subtotal'))}    "
-            f"Discount: {_money(discount)}    "
-            f"CGST: {_money(self.invoice.get('cgst_amount'))}    "
-            f"SGST: {_money(self.invoice.get('sgst_amount'))}    "
-            f"IGST: {_money(self.invoice.get('igst_amount'))}\n"
-            f"Grand Total: {_money(total)}    "
+        payment_summary = (
             f"Payment: {self.invoice.get('payment_method') or '—'} / "
             f"{self.invoice.get('payment_status') or '—'}"
+            if self.kind == "purchase"
+            else f"Payment status: {self.invoice.get('payment_status') or '—'}"
+        )
+        summary_parts = [
+            f"Subtotal: {_money(self.invoice.get('subtotal'))}",
+            f"Discount: {_money(discount)}",
+            f"CGST: {_money(self.invoice.get('cgst_amount'))}",
+            f"SGST: {_money(self.invoice.get('sgst_amount'))}",
+        ]
+        if self.kind == "purchase":
+            summary_parts.append(f"IGST: {_money(self.invoice.get('igst_amount'))}")
+        summary = (
+            "    ".join(summary_parts) + "\n"
+            f"Grand Total: {_money(total)}    {payment_summary}"
         )
         tk.Label(self, text=summary, font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_dark"],

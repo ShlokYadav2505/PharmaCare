@@ -134,12 +134,6 @@ class BillingFrame(tk.Frame):
         self._cust = tk.StringVar(value="")
         tk.Entry(body, textvariable=self._cust, **st.ENTRY).pack(fill="x", ipady=6, pady=(4,16))
 
-        tk.Label(body, text="Customer Address (optional)", font=st.FONTS["body_bold"],
-                 bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
-        self._customer_address = tk.StringVar()
-        tk.Entry(body, textvariable=self._customer_address, **st.ENTRY).pack(
-            fill="x", ipady=5, pady=(4, 10))
-
         tk.Frame(body, bg=st.COLORS["border"], height=1).pack(fill="x", pady=4)
 
         def tot_row(lbl, attr, colour=None):
@@ -168,11 +162,10 @@ class BillingFrame(tk.Frame):
 
         gst_row = tk.Frame(body, bg=st.COLORS["white"])
         gst_row.pack(fill="x", pady=3)
-        tk.Label(gst_row, text="GST Rate (%)", font=st.FONTS["small"],
+        tk.Label(gst_row, text="GST Rate (fixed)", font=st.FONTS["small"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(side="left")
-        self._gst_var = tk.StringVar(value="0")
-        self._gst_var.trace_add("write", lambda *_: self._update_totals())
-        tk.Entry(gst_row, textvariable=self._gst_var, width=8, **st.ENTRY).pack(side="right")
+        tk.Label(gst_row, text="12%", font=st.FONTS["body_bold"],
+                 bg=st.COLORS["white"], fg=st.COLORS["text_dark"]).pack(side="right")
 
         def option_row(label, var, values):
             row = tk.Frame(body, bg=st.COLORS["white"])
@@ -182,12 +175,6 @@ class BillingFrame(tk.Frame):
             ttk.Combobox(row, textvariable=var, state="readonly", values=values,
                          width=16).pack(side="right")
 
-        self._gst_mode_var = tk.StringVar(value="CGST + SGST")
-        option_row("GST Type", self._gst_mode_var, ("CGST + SGST", "IGST"))
-        self._gst_mode_var.trace_add("write", lambda *_: self._update_totals())
-        self._payment_method_var = tk.StringVar(value="Cash")
-        option_row("Payment Method", self._payment_method_var,
-                   ("Cash", "UPI", "Card", "Bank Transfer", "Credit"))
         self._payment_status_var = tk.StringVar(value="Paid")
         option_row("Payment Status", self._payment_status_var,
                    ("Paid", "Pending", "Partially Paid"))
@@ -289,11 +276,7 @@ class BillingFrame(tk.Frame):
         except ValueError:
             disc = 0
         try:
-            gst_rate = float(self._gst_var.get() or 0)
-            tax = db.calculate_gst(
-                max(sub - disc, 0), gst_rate,
-                "interstate" if self._gst_mode_var.get() == "IGST" else "local"
-            )
+            tax = db.calculate_gst(max(sub - disc, 0), 12.0, "local")
         except ValueError:
             tax = {"gst_amount": 0.0, "grand_total": max(sub - disc, 0)}
         self._subtotal.set(f"₹{sub:.2f}")
@@ -325,31 +308,26 @@ class BillingFrame(tk.Frame):
         sub = sum(i["total"] for i in self._items)
         disc = min(disc, sub)
         try:
-            gst_rate = float(self._gst_var.get() or 0)
-            tax = db.calculate_gst(
-                max(sub - disc, 0), gst_rate,
-                "interstate" if self._gst_mode_var.get() == "IGST" else "local"
-            )
+            gst_rate = 12.0
+            tax = db.calculate_gst(max(sub - disc, 0), gst_rate, "local")
         except ValueError as exc:
             messagebox.showerror("GST", str(exc), parent=self.winfo_toplevel()); return
         total = tax["grand_total"]
         customer_name = self._customer_name.get().strip() or "Walk-in Customer"
-        customer_address = self._customer_address.get().strip()
-
         if not messagebox.askyesno("Confirm Bill",
             f"Invoice: {bill_no}\nCustomer: {customer_name}\nReceipt email: {cust}\n"
             f"Items: {len(self._items)}\nSubtotal: ₹{sub:.2f}\n"
             f"Discount: ₹{disc:.2f}\nGST: ₹{tax['gst_amount']:.2f}\n"
-            f"Grand Total: ₹{total:.2f}\nPayment: {self._payment_status_var.get()}\n\nGenerate?",
+            f"Grand Total: ₹{total:.2f}\nPayment Status: {self._payment_status_var.get()}\n\nGenerate?",
             parent=self.winfo_toplevel()): return
 
         ok, result = db.record_bill(
             bill_no, cust, self._items, discount=disc, user_id=self._user_id,
             gst_rate=gst_rate,
-            gst_mode="interstate" if self._gst_mode_var.get() == "IGST" else "local",
-            payment_method=self._payment_method_var.get(),
+            gst_mode="local",
+            payment_method="",
             payment_status=self._payment_status_var.get(),
-            customer_name=customer_name, customer_address=customer_address,
+            customer_name=customer_name,
             pharmacist_name=self._pharmacist_name,
             pharmacist_email=self._user_email,
         )

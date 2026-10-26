@@ -1030,9 +1030,11 @@ def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None,
     """Save a sales invoice and its FEFO-linked transaction lines atomically."""
     conn = get_connection()
     try:
-        gst_rate = float(gst_rate)
-        if gst_mode not in ("local", "interstate"):
-            raise ValueError("Select a valid GST type.")
+        # Customer sales use a fixed 12% local GST rate. Keep the parameters
+        # for compatibility with existing callers, but don't allow them to
+        # change the amount recorded on a sales invoice.
+        gst_rate = 12.0
+        gst_mode = "local"
         if not bill_number:
             bill_number = _generate_invoice_id(conn, "SALE")
         subtotal = sum(round(item["qty"] * item["price"], 2) for item in items)
