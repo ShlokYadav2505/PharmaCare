@@ -835,25 +835,131 @@ def delete_expense(eid):
 
 # ── Transaction / sales operations ────────────────────────────────────────────
 
+def _insert_transaction(conn, bill_number, medicine_id, medicine_name,
+                        quantity, unit_price, total_price, customer_name,
+                        cost_price, batch_id, user_id=None):
+    """Insert a sale row, including user_id when the database requires it."""
+    columns = {row["name"] for row in conn.execute(
+        "PRAGMA table_info(transactions)").fetchall()}
+    fields = ["bill_number", "medicine_id", "medicine_name", "quantity",
+              "unit_price", "total_price", "customer_name", "cost_price",
+              "batch_id"]
+    values = [bill_number, medicine_id, medicine_name, quantity, unit_price,
+              total_price, customer_name, cost_price, batch_id]
+
+    if "user_id" in columns:
+        if user_id is None:
+            medicine = conn.execute(
+                "SELECT user_id FROM medicines WHERE id=?", (medicine_id,)
+            ).fetchone()
+            user_id = medicine["user_id"] if medicine else None
+        if user_id is None:
+            raise ValueError("Could not determine the pharmacist for this bill.")
+        fields.insert(0, "user_id")
+        values.insert(0, user_id)
+
+    placeholders = ",".join("?" for _ in fields)
+    conn.execute(
+        f"INSERT INTO transactions ({','.join(fields)}) VALUES ({placeholders})",
+        values
+    )
+
+
+def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None):
+    """Record every bill line and deduct its FEFO stock in one database transaction."""
+    conn = get_connection()
+    try:
+        subtotal = sum(round(item["qty"] * item["price"], 2) for item in items)
+        discount = min(max(float(discount), 0.0), subtotal)
+        remaining_discount = round(discount, 2)
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        for item_index, item in enumerate(items):
+            quantity = int(item["qty"])
+            medicine_id = item["medicine_id"]
+            batches = conn.execute(
+                """SELECT id, quantity, cost_price FROM batches
+                   WHERE medicine_id=? AND quantity>0 AND expiry_date>=?
+                   ORDER BY expiry_date ASC, id ASC""",
+                (medicine_id, today)
+            ).fetchall()
+
+            remaining_quantity = quantity
+            allocation = []
+            for batch in batches:
+                if remaining_quantity <= 0:
+                    break
+                take = min(batch["quantity"], remaining_quantity)
+                allocation.append((batch["id"], take, float(batch["cost_price"])))
+                remaining_quantity -= take
+            if remaining_quantity:
+                raise ValueError(
+                    f"Not enough non-expired stock for '{item['name']}'."
+                )
+
+            gross_line = round(quantity * item["price"], 2)
+            if item_index == len(items) - 1:
+                line_discount = remaining_discount
+            elif subtotal:
+                line_discount = round(discount * gross_line / subtotal, 2)
+                line_discount = min(line_discount, remaining_discount)
+            else:
+                line_discount = 0.0
+            remaining_discount = round(remaining_discount - line_discount, 2)
+            net_line = round(gross_line - line_discount, 2)
+            remaining_net = net_line
+            remaining_line_qty = quantity
+
+            for batch_id, take, cost_price in allocation:
+                cursor = conn.execute(
+                    """UPDATE batches SET quantity=quantity-?
+                       WHERE id=? AND quantity>=?""",
+                    (take, batch_id, take)
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("Stock changed while generating the bill. Please try again.")
+
+                if take == remaining_line_qty:
+                    batch_total = remaining_net
+                else:
+                    batch_total = round(net_line * take / quantity, 2)
+                    batch_total = min(batch_total, remaining_net)
+                _insert_transaction(
+                    conn, bill_number, medicine_id, item["name"], take,
+                    item["price"], batch_total, customer_email, cost_price,
+                    batch_id, user_id
+                )
+                remaining_net = round(remaining_net - batch_total, 2)
+                remaining_line_qty -= take
+
+            _sync_medicine_quantity(conn, medicine_id)
+
+        conn.commit()
+        return True, "Bill recorded successfully."
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+
 def add_transaction(bill_number, medicine_id, medicine_name,
                     quantity, unit_price, total_price,
                     customer_name="Walk-in Customer",
-                    cost_price=0.0, batch_id=None):
+                    cost_price=0.0, batch_id=None, user_id=None):
     try:
         conn = get_connection()
-        conn.execute(
-            """INSERT INTO transactions
-               (bill_number, medicine_id, medicine_name, quantity,
-                unit_price, total_price, customer_name, cost_price, batch_id)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (bill_number, medicine_id, medicine_name, quantity,
-             unit_price, total_price, customer_name, cost_price, batch_id)
+        _insert_transaction(
+            conn, bill_number, medicine_id, medicine_name, quantity,
+            unit_price, total_price, customer_name, cost_price, batch_id,
+            user_id
         )
         conn.commit()
-        conn.close()
         return True
     except Exception:
         return False
+    finally:
+        conn.close()
 
 
 def get_all_transactions():

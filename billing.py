@@ -16,6 +16,8 @@ class BillingFrame(tk.Frame):
     def __init__(self, parent, user_email=""):
         super().__init__(parent, bg=st.COLORS["background"])
         self._user_email = user_email
+        user = db.get_user_by_email(user_email) if user_email else None
+        self._user_id = user["id"] if user else None
         self._items = []
         self._build_ui()
         self._load_medicines()
@@ -275,35 +277,16 @@ class BillingFrame(tk.Frame):
             f"Items: {len(self._items)}\nTotal: ₹{total:.2f}\n\nGenerate?",
             parent=self.winfo_toplevel()): return
 
+        ok, result = db.record_bill(
+            bill_no, cust, self._items, discount=disc, user_id=self._user_id
+        )
+        if not ok:
+            messagebox.showerror("Bill Error", str(result),
+                                 parent=self.winfo_toplevel())
+            return
+
         low_stock_meds = []
         for item in self._items:
-            # FEFO: allocate from earliest-expiry non-expired batches
-            allocation = db.fefo_allocate(item["medicine_id"], item["qty"])
-            if not allocation:
-                messagebox.showerror(
-                    "Stock Error",
-                    f"Not enough non-expired stock for '{item['name']}'.",
-                    parent=self.winfo_toplevel()
-                )
-                return
-            ok, result = db.fefo_commit(item["medicine_id"], allocation)
-            if not ok:
-                messagebox.showerror("Stock Error", str(result),
-                                     parent=self.winfo_toplevel())
-                return
-            # Record one transaction line per batch used (for accurate COGS)
-            remaining_to_record = item["qty"]
-            for batch_id, take, cost_price in result:
-                if remaining_to_record <= 0:
-                    break
-                line_qty = min(take, remaining_to_record)
-                line_total = round(line_qty * item["price"], 2)
-                db.add_transaction(
-                    bill_no, item["medicine_id"], item["name"],
-                    line_qty, item["price"], line_total, cust,
-                    cost_price=cost_price, batch_id=batch_id
-                )
-                remaining_to_record -= line_qty
             med = db.get_medicine_by_id(item["medicine_id"])
             if med and med["quantity"] <= med["min_stock"]:
                 low_stock_meds.append(med)
