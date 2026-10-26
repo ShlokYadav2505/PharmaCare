@@ -4,6 +4,7 @@
 import sqlite3
 import hashlib
 import os
+import secrets
 from datetime import datetime, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pharmacy.db")
@@ -62,6 +63,30 @@ def initialize_database():
             FOREIGN KEY (medicine_id) REFERENCES medicines(id)
         )""")
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sales_invoices (
+            invoice_number TEXT PRIMARY KEY,
+            invoice_date TEXT NOT NULL,
+            pharmacy_name TEXT NOT NULL DEFAULT 'PharmaCare',
+            pharmacist_name TEXT,
+            pharmacist_email TEXT,
+            customer_name TEXT NOT NULL DEFAULT 'Walk-in Customer',
+            customer_email TEXT,
+            customer_address TEXT,
+            subtotal REAL NOT NULL DEFAULT 0,
+            discount_amount REAL NOT NULL DEFAULT 0,
+            gst_rate REAL NOT NULL DEFAULT 0,
+            gst_mode TEXT NOT NULL DEFAULT 'local',
+            cgst_amount REAL NOT NULL DEFAULT 0,
+            sgst_amount REAL NOT NULL DEFAULT 0,
+            igst_amount REAL NOT NULL DEFAULT 0,
+            grand_total REAL NOT NULL DEFAULT 0,
+            payment_method TEXT NOT NULL DEFAULT 'Cash',
+            payment_status TEXT NOT NULL DEFAULT 'Paid',
+            pharmacist_user_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
     # New tables for vendor / purchase / batch / expense
     cur.execute("""
         CREATE TABLE IF NOT EXISTS vendors (
@@ -106,6 +131,43 @@ def initialize_database():
             expense_date  TEXT NOT NULL,
             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+
+    # Additive invoice fields preserve existing purchases, batches and sales.
+    migrations = {
+        "purchases": {
+            "supplier_invoice_number": "TEXT",
+            "subtotal": "REAL NOT NULL DEFAULT 0",
+            "gst_rate": "REAL NOT NULL DEFAULT 0",
+            "gst_mode": "TEXT NOT NULL DEFAULT 'local'",
+            "cgst_amount": "REAL NOT NULL DEFAULT 0",
+            "sgst_amount": "REAL NOT NULL DEFAULT 0",
+            "igst_amount": "REAL NOT NULL DEFAULT 0",
+            "payment_method": "TEXT NOT NULL DEFAULT 'Cash'",
+            "payment_status": "TEXT NOT NULL DEFAULT 'Paid'",
+            "pharmacy_name": "TEXT NOT NULL DEFAULT 'PharmaCare'",
+            "pharmacist_name": "TEXT",
+            "pharmacist_email": "TEXT",
+        },
+        "batches": {
+            "manufacture_date": "TEXT",
+            "gst_rate": "REAL NOT NULL DEFAULT 0",
+            "gst_amount": "REAL NOT NULL DEFAULT 0",
+        },
+        "transactions": {
+            "discount_amount": "REAL NOT NULL DEFAULT 0",
+            "gst_rate": "REAL NOT NULL DEFAULT 0",
+            "gst_amount": "REAL NOT NULL DEFAULT 0",
+        },
+    }
+    for table, definitions in migrations.items():
+        existing = {row["name"] for row in cur.execute(
+            f"PRAGMA table_info({table})").fetchall()}
+        for column, definition in definitions.items():
+            if column not in existing:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    # Older purchases stored the pre-tax amount in total_amount.
+    cur.execute("UPDATE purchases SET subtotal=total_amount WHERE subtotal=0")
 
     # Migration: add cost_price / batch_id to transactions if missing (older DBs)
     try:
@@ -644,83 +706,131 @@ def search_vendors(query):
 
 # ── Purchase operations ───────────────────────────────────────────────────────
 
-def record_purchase(vendor_id, invoice_number, purchase_date, items, notes=""):
-    """
-    items = list of dicts:
-      {medicine_id, batch_number, quantity, cost_price, expiry_date}
+def _generate_invoice_id(conn, prefix):
+    table = "sales_invoices" if prefix == "SALE" else "purchases"
+    while True:
+        invoice_id = f"{prefix}-{datetime.now():%Y%m%d}-{secrets.token_hex(4).upper()}"
+        if not conn.execute(
+            f"SELECT 1 FROM {table} WHERE invoice_number=?", (invoice_id,)
+        ).fetchone():
+            return invoice_id
 
-    Atomic: either everything is saved or nothing is.
-    Returns (ok, message, purchase_id or None)
-    """
+
+def generate_invoice_id(prefix="SALE"):
+    conn = get_connection()
+    try:
+        return _generate_invoice_id(conn, prefix)
+    finally:
+        conn.close()
+
+
+def calculate_gst(amount, rate, mode="local"):
+    """Return a rounded GST split and grand total for an invoice subtotal."""
+    taxable = round(max(float(amount), 0.0), 2)
+    rate = float(rate)
+    if rate < 0 or rate > 100:
+        raise ValueError("GST rate must be between 0 and 100%.")
+    tax = round(taxable * rate / 100.0, 2)
+    if mode == "interstate":
+        cgst = sgst = 0.0
+        igst = tax
+    else:
+        cgst = round(tax / 2.0, 2)
+        sgst = round(tax - cgst, 2)
+        igst = 0.0
+    return {
+        "cgst_amount": cgst,
+        "sgst_amount": sgst,
+        "igst_amount": igst,
+        "gst_amount": tax,
+        "grand_total": round(taxable + tax, 2),
+    }
+
+
+def record_purchase(vendor_id, invoice_number, purchase_date, items, notes="",
+                    gst_rate=0.0, gst_mode="local", payment_method="Cash",
+                    payment_status="Paid", pharmacy_name="PharmaCare",
+                    pharmacist_name="", pharmacist_email=""):
+    """Save a vendor invoice, its batch lines, and stock updates atomically."""
     if not items:
         return False, "Add at least one medicine line.", None
-    if not purchase_date:
-        return False, "Purchase date is required.", None
-
-    # Validate dates and reject past expiry for new stock
-    today = datetime.now().date()
-    for it in items:
-        try:
+    try:
+        datetime.strptime(purchase_date, "%Y-%m-%d")
+        gst_rate = float(gst_rate)
+        if gst_mode not in ("local", "interstate"):
+            raise ValueError("Select a valid GST type.")
+        inv = (invoice_number or "").strip()
+        today = datetime.now().date()
+        subtotal = 0.0
+        for it in items:
             exp = datetime.strptime(it["expiry_date"], "%Y-%m-%d").date()
-        except (ValueError, KeyError):
-            return False, f"Invalid expiry date for batch {it.get('batch_number','')}.", None
-        if exp < today:
-            return False, (
-                f"Expiry date {it['expiry_date']} is already past. "
-                "Cannot add expired stock for sale."
-            ), None
-        if int(it["quantity"]) <= 0:
-            return False, "Quantity must be greater than zero.", None
-        if float(it["cost_price"]) < 0:
-            return False, "Cost price cannot be negative.", None
+            mfg = (it.get("manufacture_date") or "").strip()
+            if mfg:
+                mfg_date = datetime.strptime(mfg, "%Y-%m-%d").date()
+                if mfg_date > exp:
+                    raise ValueError("Manufacturing date cannot be after expiry date.")
+            if exp < today:
+                raise ValueError("Cannot add stock with an expiry date in the past.")
+            qty = int(it["quantity"])
+            cost = float(it["cost_price"])
+            if qty <= 0 or cost < 0:
+                raise ValueError("Quantity must be positive and cost cannot be negative.")
+            subtotal += qty * cost
+        subtotal = round(subtotal, 2)
+        tax = calculate_gst(subtotal, gst_rate, gst_mode)
+    except (ValueError, KeyError, TypeError) as exc:
+        return False, str(exc) or "Enter valid invoice details.", None
 
     conn = get_connection()
     try:
-        # Duplicate invoice check (same vendor + same invoice)
-        inv = (invoice_number or "").strip()
         if inv:
             dup = conn.execute(
-                "SELECT id FROM purchases WHERE vendor_id=? AND invoice_number=?",
-                (vendor_id, inv)
+                """SELECT id FROM purchases WHERE vendor_id=?
+                   AND (supplier_invoice_number=? OR invoice_number=?)""",
+                (vendor_id, inv, inv)
             ).fetchone()
             if dup:
-                conn.close()
-                return False, "This invoice number already exists for the selected vendor.", None
+                return False, "This vendor invoice number already exists.", None
 
-        total = sum(int(it["quantity"]) * float(it["cost_price"]) for it in items)
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO purchases (vendor_id, invoice_number, purchase_date, total_amount, notes)
-               VALUES (?,?,?,?,?)""",
-            (vendor_id, inv or None, purchase_date, total, notes.strip())
-        )
-        purchase_id = cur.lastrowid
+        invoice_id = _generate_invoice_id(conn, "PUR")
+        purchase_id = conn.execute(
+            """INSERT INTO purchases
+               (vendor_id, invoice_number, supplier_invoice_number, purchase_date,
+                subtotal, total_amount, gst_rate, gst_mode, cgst_amount,
+                sgst_amount, igst_amount, payment_method, payment_status,
+                pharmacy_name, pharmacist_name, pharmacist_email, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (vendor_id, invoice_id, inv or None, purchase_date, subtotal,
+             tax["grand_total"], gst_rate, gst_mode, tax["cgst_amount"],
+             tax["sgst_amount"], tax["igst_amount"], payment_method,
+             payment_status, pharmacy_name, pharmacist_name, pharmacist_email,
+             (notes or "").strip())
+        ).lastrowid
 
         for it in items:
             mid = int(it["medicine_id"])
             qty = int(it["quantity"])
             cost = float(it["cost_price"])
             batch_no = str(it["batch_number"]).strip()
-            exp = it["expiry_date"]
-
-            # Warn-level: same medicine + same batch already exists – still allow
-            # but we keep them as separate rows if quantities differ; for simplicity
-            # we always insert a new batch row (FEFO works with multiple rows).
-            cur.execute(
+            line_tax = calculate_gst(qty * cost, gst_rate, gst_mode)
+            conn.execute(
                 """INSERT INTO batches
-                   (medicine_id, purchase_id, batch_number, quantity, cost_price, expiry_date)
-                   VALUES (?,?,?,?,?,?)""",
-                (mid, purchase_id, batch_no, qty, cost, exp)
+                   (medicine_id, purchase_id, batch_number, quantity, cost_price,
+                    expiry_date, manufacture_date, gst_rate, gst_amount)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (mid, purchase_id, batch_no, qty, cost, it["expiry_date"],
+                 (it.get("manufacture_date") or "").strip() or None,
+                 gst_rate, line_tax["gst_amount"])
             )
             _sync_medicine_quantity(conn, mid)
 
         conn.commit()
-        conn.close()
-        return True, f"Purchase recorded. Total cost: ₹{total:.2f}", purchase_id
+        return True, f"Purchase invoice {invoice_id} recorded. Total: ₹{tax['grand_total']:.2f}", purchase_id
     except Exception as e:
         conn.rollback()
-        conn.close()
         return False, str(e), None
+    finally:
+        conn.close()
 
 
 def get_all_purchases():
@@ -775,6 +885,44 @@ def get_purchase_items(purchase_id):
     ).fetchall()
     conn.close()
     return rows
+
+
+def get_purchase_invoice(purchase_id):
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """SELECT p.*, v.name AS vendor_name, v.contact_person AS vendor_contact,
+                      v.phone AS vendor_phone, v.email AS vendor_email,
+                      v.address AS vendor_address
+               FROM purchases p JOIN vendors v ON v.id=p.vendor_id WHERE p.id=?""",
+            (purchase_id,)
+        ).fetchone()
+        if not row:
+            return None
+        invoice = dict(row)
+        invoice["items"] = [dict(item) for item in conn.execute(
+            """SELECT b.*, m.name AS medicine_name
+               FROM batches b JOIN medicines m ON m.id=b.medicine_id
+               WHERE b.purchase_id=? ORDER BY b.id""",
+            (purchase_id,)
+        ).fetchall()]
+        return invoice
+    finally:
+        conn.close()
+
+
+def get_purchase_invoices(limit=500):
+    conn = get_connection()
+    try:
+        return conn.execute(
+            """SELECT p.id, p.invoice_number, p.purchase_date, p.total_amount,
+                      p.payment_status, v.name AS vendor_name
+               FROM purchases p JOIN vendors v ON v.id=p.vendor_id
+               ORDER BY p.purchase_date DESC, p.id DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+    finally:
+        conn.close()
 
 
 # ── Expense operations ────────────────────────────────────────────────────────
@@ -837,15 +985,24 @@ def delete_expense(eid):
 
 def _insert_transaction(conn, bill_number, medicine_id, medicine_name,
                         quantity, unit_price, total_price, customer_name,
-                        cost_price, batch_id, user_id=None):
+                        cost_price, batch_id, user_id=None,
+                        discount_amount=0.0, gst_rate=0.0, gst_amount=0.0):
     """Insert a sale row, including user_id when the database requires it."""
     columns = {row["name"] for row in conn.execute(
         "PRAGMA table_info(transactions)").fetchall()}
     fields = ["bill_number", "medicine_id", "medicine_name", "quantity",
               "unit_price", "total_price", "customer_name", "cost_price",
-              "batch_id"]
+              "batch_id", "discount_amount", "gst_rate", "gst_amount"]
     values = [bill_number, medicine_id, medicine_name, quantity, unit_price,
-              total_price, customer_name, cost_price, batch_id]
+              total_price, customer_name, cost_price, batch_id,
+              discount_amount, gst_rate, gst_amount]
+    fields = [field for field in fields if field in columns]
+    value_by_field = dict(zip(
+        ["bill_number", "medicine_id", "medicine_name", "quantity",
+         "unit_price", "total_price", "customer_name", "cost_price", "batch_id",
+         "discount_amount", "gst_rate", "gst_amount"], values
+    ))
+    values = [value_by_field[field] for field in fields]
 
     if "user_id" in columns:
         if user_id is None:
@@ -865,14 +1022,41 @@ def _insert_transaction(conn, bill_number, medicine_id, medicine_name,
     )
 
 
-def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None):
-    """Record every bill line and deduct its FEFO stock in one database transaction."""
+def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None,
+                gst_rate=0.0, gst_mode="local", payment_method="Cash",
+                payment_status="Paid", customer_name="Walk-in Customer",
+                customer_address="", pharmacy_name="PharmaCare",
+                pharmacist_name="", pharmacist_email=""):
+    """Save a sales invoice and its FEFO-linked transaction lines atomically."""
     conn = get_connection()
     try:
+        gst_rate = float(gst_rate)
+        if gst_mode not in ("local", "interstate"):
+            raise ValueError("Select a valid GST type.")
+        if not bill_number:
+            bill_number = _generate_invoice_id(conn, "SALE")
         subtotal = sum(round(item["qty"] * item["price"], 2) for item in items)
         discount = min(max(float(discount), 0.0), subtotal)
+        taxable_subtotal = round(subtotal - discount, 2)
+        tax = calculate_gst(taxable_subtotal, gst_rate, gst_mode)
         remaining_discount = round(discount, 2)
+        remaining_gst = tax["gst_amount"]
         today = datetime.now().strftime("%Y-%m-%d")
+
+        conn.execute(
+            """INSERT INTO sales_invoices
+               (invoice_number, invoice_date, pharmacy_name, pharmacist_name,
+                pharmacist_email, customer_name, customer_email, customer_address,
+                subtotal, discount_amount, gst_rate, gst_mode, cgst_amount,
+                sgst_amount, igst_amount, grand_total, payment_method,
+                payment_status, pharmacist_user_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (bill_number, today, pharmacy_name, pharmacist_name, pharmacist_email,
+             customer_name or "Walk-in Customer", customer_email, customer_address,
+             subtotal, discount, gst_rate, gst_mode, tax["cgst_amount"],
+             tax["sgst_amount"], tax["igst_amount"], tax["grand_total"],
+             payment_method, payment_status, user_id)
+        )
 
         for item_index, item in enumerate(items):
             quantity = int(item["qty"])
@@ -909,6 +1093,15 @@ def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None):
             net_line = round(gross_line - line_discount, 2)
             remaining_net = net_line
             remaining_line_qty = quantity
+            if item_index == len(items) - 1:
+                line_gst = remaining_gst
+            elif taxable_subtotal:
+                line_gst = round(tax["gst_amount"] * net_line / taxable_subtotal, 2)
+                line_gst = min(line_gst, remaining_gst)
+            else:
+                line_gst = 0.0
+            remaining_gst = round(remaining_gst - line_gst, 2)
+            remaining_line_gst = line_gst
 
             for batch_id, take, cost_price in allocation:
                 cursor = conn.execute(
@@ -924,12 +1117,22 @@ def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None):
                 else:
                     batch_total = round(net_line * take / quantity, 2)
                     batch_total = min(batch_total, remaining_net)
+                if take == remaining_line_qty:
+                    batch_gst = remaining_line_gst
+                elif net_line:
+                    batch_gst = round(line_gst * batch_total / net_line, 2)
+                    batch_gst = min(batch_gst, remaining_line_gst)
+                else:
+                    batch_gst = 0.0
                 _insert_transaction(
                     conn, bill_number, medicine_id, item["name"], take,
-                    item["price"], batch_total, customer_email, cost_price,
-                    batch_id, user_id
+                    item["price"], batch_total, customer_name, cost_price,
+                    batch_id, user_id,
+                    discount_amount=round(item["price"] * take - batch_total, 2),
+                    gst_rate=gst_rate, gst_amount=batch_gst
                 )
                 remaining_net = round(remaining_net - batch_total, 2)
+                remaining_line_gst = round(remaining_line_gst - batch_gst, 2)
                 remaining_line_qty -= take
 
             _sync_medicine_quantity(conn, medicine_id)
@@ -946,13 +1149,14 @@ def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None):
 def add_transaction(bill_number, medicine_id, medicine_name,
                     quantity, unit_price, total_price,
                     customer_name="Walk-in Customer",
-                    cost_price=0.0, batch_id=None, user_id=None):
+                    cost_price=0.0, batch_id=None, user_id=None,
+                    discount_amount=0.0, gst_rate=0.0, gst_amount=0.0):
     try:
         conn = get_connection()
         _insert_transaction(
             conn, bill_number, medicine_id, medicine_name, quantity,
             unit_price, total_price, customer_name, cost_price, batch_id,
-            user_id
+            user_id, discount_amount, gst_rate, gst_amount
         )
         conn.commit()
         return True
@@ -981,6 +1185,44 @@ def get_transactions_by_date(start, end):
     ).fetchall()
     conn.close()
     return rows
+
+
+def get_sales_invoice(invoice_number):
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM sales_invoices WHERE invoice_number=?",
+            (invoice_number,)
+        ).fetchone()
+        if not row:
+            return None
+        invoice = dict(row)
+        invoice["items"] = [dict(item) for item in conn.execute(
+            """SELECT t.*, m.id AS medicine_id, m.name AS invoice_medicine_name,
+                      b.batch_number, b.manufacture_date, b.expiry_date
+               FROM transactions t
+               LEFT JOIN medicines m ON m.id=t.medicine_id
+               LEFT JOIN batches b ON b.id=t.batch_id
+               WHERE t.bill_number=? ORDER BY t.id""",
+            (invoice_number,)
+        ).fetchall()]
+        return invoice
+    finally:
+        conn.close()
+
+
+def get_sales_invoices(limit=500):
+    conn = get_connection()
+    try:
+        return conn.execute(
+            """SELECT invoice_number, invoice_date, customer_name, customer_email,
+                      grand_total, payment_status
+               FROM sales_invoices
+               ORDER BY invoice_date DESC, created_at DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+    finally:
+        conn.close()
 
 
 # ── Financial / dashboard stats ───────────────────────────────────────────────
@@ -1037,7 +1279,7 @@ def get_financial_summary(start, end):
         (start, end)
     ).fetchone()[0]
     purchases = conn.execute(
-        """SELECT COALESCE(SUM(total_amount),0) FROM purchases
+        """SELECT COALESCE(SUM(subtotal),0) FROM purchases
            WHERE purchase_date BETWEEN ? AND ?""",
         (start, end)
     ).fetchone()[0]
@@ -1048,7 +1290,13 @@ def get_financial_summary(start, end):
     purchases = float(purchases)
     gross = revenue - cogs
     net = gross - expenses
+    # Expenditure = medicine purchases actually received + operating expenses.
+    # Profit = Revenue - Expenditure (cash basis, no double counting).
+    expenditure = purchases + expenses
+    profit = revenue - expenditure
     return {
+        "expenditure": round(expenditure, 2),
+        "profit": round(profit, 2),
         "revenue": round(revenue, 2),
         "cogs": round(cogs, 2),
         "gross_profit": round(gross, 2),

@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 import database as db
+import invoices
 import styles as st
 
 
@@ -26,6 +27,8 @@ class ReportsFrame(tk.Frame):
         top.grid(row=0, column=0, sticky="ew", padx=20, pady=(16,8))
         tk.Label(top, text="Reports & Analytics", font=st.FONTS["heading"],
                  bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).pack(side="left")
+        tk.Button(top, text="View Invoice", command=self._open_invoice,
+                  **st.BUTTON["secondary"]).pack(side="right", padx=(8, 0))
         tk.Button(top, text="📥 Export CSV", command=self._export,
                   **st.BUTTON["secondary"]).pack(side="right")
 
@@ -89,6 +92,7 @@ class ReportsFrame(tk.Frame):
         self._tree.tag_configure("low",     background="#FFF3E0")
         self._tree.tag_configure("expired", background="#FFEBEE")
         self._tree.tag_configure("alt",     background=st.COLORS["row_even"])
+        self._tree.bind("<Double-1>", self._open_invoice)
 
         self._summary = tk.StringVar()
         tk.Label(self, textvariable=self._summary, font=st.FONTS["body_bold"],
@@ -126,6 +130,21 @@ class ReportsFrame(tk.Frame):
     def _load(self, key):
         self._clear()
         getattr(self, f"_rep_{key}")()
+
+    def _open_invoice(self, _event=None):
+        selection = self._tree.selection()
+        if not selection:
+            messagebox.showinfo("Select an invoice", "Select a sales or purchase row first.",
+                                parent=self.winfo_toplevel())
+            return
+        values = self._tree.item(selection[0], "values")
+        if self._current == "sales":
+            invoices.open_invoice(self.winfo_toplevel(), "sale", values[0])
+        elif self._current in ("purchases", "vendor_hist"):
+            invoices.open_invoice(self.winfo_toplevel(), "purchase", values[0])
+        else:
+            messagebox.showinfo("Invoice view", "Open Sales or Purchases and select a row.",
+                                parent=self.winfo_toplevel())
 
     def _quick(self, days):
         end = datetime.now(); start = end - timedelta(days=days)
@@ -243,18 +262,17 @@ class ReportsFrame(tk.Frame):
         fin = db.get_financial_summary(s, e)
         rows = [
             ("Revenue (Sales)", fin["revenue"]),
-            ("Cost of Goods Sold (COGS)", fin["cogs"]),
-            ("Gross Profit (Revenue − COGS)", fin["gross_profit"]),
-            ("Operating Expenses", fin["expenses"]),
-            ("Net Operating Profit", fin["net_profit"]),
-            ("Vendor Purchases (period)", fin["purchases_total"]),
+            ("Expenditure: Vendor Purchases (received)", fin["purchases_total"]),
+            ("Expenditure: Operating Expenses", fin["expenses"]),
+            ("Total Expenditure", fin["expenditure"]),
+            ("Profit (Revenue - Expenditure)", fin["profit"]),
         ]
         for i, (metric, val) in enumerate(rows):
             self._tree.insert("","end", tags=("alt" if i%2==0 else "",),
                 values=(metric, f"₹{val:,.2f}"))
         self._summary.set(
             f"Financial Summary  |  {s} → {e}  |  "
-            f"Gross: ₹{fin['gross_profit']:,.2f}  Net: ₹{fin['net_profit']:,.2f}"
+            f"Revenue: ₹{fin['revenue']:,.2f}  Expenditure: ₹{fin['expenditure']:,.2f}  Profit: ₹{fin['profit']:,.2f}"
         )
 
     def _rep_vendor_hist(self):

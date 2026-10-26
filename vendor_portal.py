@@ -1,6 +1,6 @@
 """Simple role-specific Tkinter screens for the vendor purchase workflow."""
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 from datetime import date
 import database as db
 import vendor_system as vs
@@ -75,10 +75,13 @@ class VendorPortalFrame(tk.Frame):
         self.v_unit = tk.StringVar(value="pack")
         self.v_price = tk.StringVar()
         self.v_qty = tk.StringVar()
+        self.v_mfg = tk.StringVar(value=date.today().isoformat())
         self.v_expiry = tk.StringVar(value=date.today().replace(year=date.today().year + 1).isoformat())
+        self.v_gst = tk.StringVar(value="0")
         fields = [("Medicine", self.v_name, 22), ("Unit", self.v_unit, 10),
                   ("Wholesale price ₹", self.v_price, 14), ("Available quantity", self.v_qty, 14),
-                  ("Expiry YYYY-MM-DD", self.v_expiry, 17)]
+                  ("Mfg YYYY-MM-DD", self.v_mfg, 14),
+                  ("Expiry YYYY-MM-DD", self.v_expiry, 14), ("GST %", self.v_gst, 7)]
         for i, (label, var, width) in enumerate(fields):
             cell = tk.Frame(form, bg="#F4F7F4")
             cell.grid(row=0, column=i, padx=4, sticky="ew")
@@ -90,7 +93,8 @@ class VendorPortalFrame(tk.Frame):
         tk.Label(self.body, text="Your catalogue", bg="#F4F7F4",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.catalog_tree = self._table(self.body, [("name","Medicine",220),("unit","Unit",90),
-            ("price","Wholesale ₹",120),("qty","Available",100),("expiry","Expiry",130)], 6)
+            ("price","Wholesale ₹",120),("qty","Available",100),("mfg","Mfg",120),
+            ("expiry","Expiry",130),("gst","GST %",80)], 6)
         tk.Label(self.body, text="Orders", bg="#F4F7F4", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.orders_tree = self._table(self.body, [("id","Order #",80),("pharmacist","Pharmacist",150),
             ("total","Total ₹",120),("status","Status",150),("date","Placed",160)], 5)
@@ -99,7 +103,7 @@ class VendorPortalFrame(tk.Frame):
         for label, action in [
             ("Confirm selected", "confirm"),
             ("Reject selected", "reject"),
-            ("Dispatch (batch & expiry)", "dispatch"),
+            ("Mark dispatched", "dispatch"),
             ("Refresh", "refresh"),
         ]:
             tk.Button(buttons, text=label, command=(self.refresh if action=="refresh" else lambda a=action: self._act(a)),
@@ -111,7 +115,8 @@ class VendorPortalFrame(tk.Frame):
                  font=("Segoe UI", 14, "bold")).pack(anchor="w")
         self.catalog_tree = self._table(self.body, [("id","Item ID",70),("vendor","Vendor",180),
             ("name","Medicine",220),("unit","Unit",80),("price","Wholesale ₹",120),
-            ("qty","Available",90),("expiry","Expiry",120)], 12)
+            ("qty","Available",90),("mfg","Mfg",120),("expiry","Expiry",120),
+            ("gst","GST %",80)], 12)
         form = tk.Frame(self.body, bg="#F4F7F4")
         form.pack(fill="x", pady=8)
         tk.Label(form, text="Order quantity:", bg="#F4F7F4").pack(side="left")
@@ -119,8 +124,6 @@ class VendorPortalFrame(tk.Frame):
         tk.Entry(form, textvariable=self.order_qty, width=10).pack(side="left", padx=8)
         tk.Button(form, text="Place order & email receipt", command=self._place_order,
                   bg="#2E7D32", fg="white", padx=12, pady=5).pack(side="left", padx=4)
-        tk.Button(form, text="Receive order", command=self._receive_selected,
-                  padx=12, pady=5).pack(side="left", padx=4)
         tk.Button(form, text="Cancel pending order", command=lambda: self._act("cancel"),
                   padx=12, pady=5).pack(side="left", padx=4)
         tk.Label(self.body, text="My orders", bg="#F4F7F4",
@@ -130,8 +133,11 @@ class VendorPortalFrame(tk.Frame):
         self.refresh()
 
     def _add_catalog(self):
-        ok, msg = vs.add_catalog_item(self.vendor["id"], self.v_name.get(), self.v_unit.get(),
-                                      self.v_price.get(), self.v_qty.get(), self.v_expiry.get())
+        ok, msg = vs.add_catalog_item(
+            self.vendor["id"], self.v_name.get(), self.v_unit.get(),
+            self.v_price.get(), self.v_qty.get(), self.v_expiry.get(),
+            manufacture_date=self.v_mfg.get(), gst_rate=self.v_gst.get()
+        )
         if not ok:
             messagebox.showerror("Catalogue", msg, parent=self)
             return
@@ -162,82 +168,20 @@ class VendorPortalFrame(tk.Frame):
             messagebox.showerror("Order failed", result, parent=self)
             return
         user = db.get_user_by_username(self.username)
-        vs.send_order_receipt(result, user["email"])
+        vs.notify_order_placed(result, user["email"] if user else "")
         self.refresh()
-        messagebox.showinfo("Order placed", f"Order #{result} saved. An email receipt will be sent if SMTP is configured.", parent=self)
-
-    def _receive_selected(self):
-        order_id = self._selected_id(self.orders_tree)
-        if order_id is None:
-            return
-        items = vs.get_order_items(order_id)
-        if len(items) != 1:
-            messagebox.showerror("Receive order", "This screen supports one medicine per order.", parent=self)
-            return
-        item = items[0]
-        remaining = int(item["quantity"]) - int(item["received_quantity"])
-        if remaining <= 0:
-            messagebox.showinfo("Receive order", "This order has already been fully received.", parent=self)
-            return
-        batch = (item["dispatch_batch_number"] if "dispatch_batch_number" in item.keys() else "") or ""
-        if not batch.strip():
-            messagebox.showerror(
-                "Receive order",
-                "This order is not dispatched with a batch number yet.",
-                parent=self,
-            )
-            return
-        qty = simpledialog.askinteger(
-            "Verify delivery",
-            f"Medicine: {item['medicine_name']}\n"
-            f"Vendor batch: {batch}\n"
-            f"Expiry: {item['expiry_date']}\n\n"
-            f"Ordered: {item['quantity']}\n"
-            f"Already received: {item['received_quantity']}\n"
-            f"Still expected: {remaining}\n\n"
-            "Confirm these match the shipment, then enter the quantity received now:",
+        messagebox.showinfo(
+            "Order placed",
+            f"Order #{result} saved. Email notifications will be sent if SMTP is configured.",
             parent=self,
-            minvalue=1,
-            maxvalue=remaining,
         )
-        if qty is None:
-            return
-        ok, msg = vs.transition_order(order_id, "receive", self.role, self.user_id, receive_quantity=qty)
-        if not ok:
-            messagebox.showerror("Receive order", msg, parent=self)
-        else:
-            messagebox.showinfo("Receive order", msg, parent=self)
-        self.refresh()
 
     def _act(self, action):
         tree = self.orders_tree
         order_id = self._selected_id(tree)
         if order_id is None:
             return
-        dispatch_batch = dispatch_expiry = None
-        if action == "dispatch":
-            dispatch_batch = simpledialog.askstring(
-                "Dispatch order",
-                "Enter the medicine batch number for this shipment:",
-                parent=self,
-            )
-            if dispatch_batch is None:
-                return
-            dispatch_expiry = simpledialog.askstring(
-                "Dispatch order",
-                "Enter expiry date (YYYY-MM-DD):",
-                parent=self,
-            )
-            if dispatch_expiry is None:
-                return
-        ok, msg = vs.transition_order(
-            order_id,
-            action,
-            self.role,
-            self.user_id,
-            dispatch_batch=dispatch_batch,
-            dispatch_expiry=dispatch_expiry,
-        )
+        ok, msg = vs.transition_order(order_id, action, self.role, self.user_id)
         if not ok:
             messagebox.showerror("Order", msg, parent=self)
         else:
@@ -253,7 +197,9 @@ class VendorPortalFrame(tk.Frame):
         if self.role == "vendor":
             for row in vs.get_catalog(self.vendor["id"]):
                 self.catalog_tree.insert("", "end", iid=str(row["id"]), values=(row["medicine_name"], row["unit"],
-                    f"{row['wholesale_price']:.2f}", row["available_quantity"], row["expiry_date"]))
+                    f"{row['wholesale_price']:.2f}", row["available_quantity"],
+                    row["manufacture_date"] or "—", row["expiry_date"],
+                    f"{float(row['gst_rate'] or 0):g}%"))
             orders = vs.list_orders(vendor_id=self.vendor["id"], role="vendor")
             for row in orders:
                 self.orders_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["pharmacist_name"],
@@ -262,7 +208,8 @@ class VendorPortalFrame(tk.Frame):
             for row in vs.get_catalog():
                 self.catalog_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["business_name"],
                     row["medicine_name"], row["unit"], f"{row['wholesale_price']:.2f}",
-                    row["available_quantity"], row["expiry_date"]))
+                    row["available_quantity"], row["manufacture_date"] or "—",
+                    row["expiry_date"], f"{float(row['gst_rate'] or 0):g}%"))
             orders = vs.list_orders(user_id=self.user_id)
             for row in orders:
                 self.orders_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["business_name"],

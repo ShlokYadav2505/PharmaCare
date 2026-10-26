@@ -38,7 +38,9 @@ def initialize_vendor_system():
         unit TEXT NOT NULL DEFAULT 'pack',
         wholesale_price REAL NOT NULL CHECK(wholesale_price >= 0),
         available_quantity INTEGER NOT NULL DEFAULT 0 CHECK(available_quantity >= 0),
+        manufacture_date TEXT,
         expiry_date TEXT NOT NULL,
+        gst_rate REAL NOT NULL DEFAULT 0,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(vendor_id) REFERENCES vendor_accounts(id),
         UNIQUE(vendor_id, medicine_name, expiry_date)
@@ -64,6 +66,8 @@ def initialize_vendor_system():
         quantity INTEGER NOT NULL CHECK(quantity > 0),
         received_quantity INTEGER NOT NULL DEFAULT 0,
         unit_price REAL NOT NULL CHECK(unit_price >= 0),
+        manufacture_date TEXT,
+        gst_rate REAL NOT NULL DEFAULT 0,
         expiry_date TEXT NOT NULL,
         FOREIGN KEY(order_id) REFERENCES vendor_orders(id),
         FOREIGN KEY(catalog_id) REFERENCES vendor_catalog(id)
@@ -76,6 +80,20 @@ def initialize_vendor_system():
         cur.execute(
             "ALTER TABLE vendor_order_items ADD COLUMN dispatch_batch_number TEXT NOT NULL DEFAULT ''"
         )
+    for table, required in {
+        "vendor_catalog": {
+            "manufacture_date": "TEXT",
+            "gst_rate": "REAL NOT NULL DEFAULT 0",
+        },
+        "vendor_order_items": {
+            "manufacture_date": "TEXT",
+            "gst_rate": "REAL NOT NULL DEFAULT 0",
+        },
+    }.items():
+        cols = {row["name"] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, definition in required.items():
+            if name not in cols:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
     conn.commit()
     conn.close()
 
@@ -116,23 +134,31 @@ def get_user_id(username):
     return row["id"] if row else None
 
 
-def add_catalog_item(vendor_id, name, unit, price, quantity, expiry_date):
+def add_catalog_item(vendor_id, name, unit, price, quantity, expiry_date,
+                     manufacture_date="", gst_rate=0):
     name = name.strip()
     try:
-        datetime.strptime(expiry_date, "%Y-%m-%d")
+        exp_date = datetime.strptime(expiry_date, "%Y-%m-%d").date()
+        mfg_raw = (manufacture_date or "").strip()
+        mfg_date = datetime.strptime(mfg_raw, "%Y-%m-%d").date() if mfg_raw else None
         price, quantity = float(price), int(quantity)
-        if not name or price < 0 or quantity < 0:
-            return False, "Enter a medicine name and valid non-negative price/quantity."
+        gst_rate = float(gst_rate)
+        if not name or price < 0 or quantity < 0 or not 0 <= gst_rate <= 100:
+            return False, "Enter a medicine name and valid price, quantity, and GST rate (0–100%)."
     except (ValueError, TypeError):
-        return False, "Use a valid price, whole-number quantity, and expiry date (YYYY-MM-DD)."
-    if datetime.strptime(expiry_date, "%Y-%m-%d").date() < datetime.now().date():
+        return False, "Use valid price, quantity, GST, manufacture, and expiry values."
+    if mfg_date and mfg_date > exp_date:
+        return False, "Manufacture date cannot be after expiry date."
+    if exp_date < datetime.now().date():
         return False, "Expiry date must be today or later."
     conn = _conn()
     try:
         conn.execute("""INSERT INTO vendor_catalog
-            (vendor_id,medicine_name,unit,wholesale_price,available_quantity,expiry_date)
-            VALUES (?,?,?,?,?,?)""",
-            (vendor_id, name, unit.strip() or "pack", price, quantity, expiry_date))
+            (vendor_id,medicine_name,unit,wholesale_price,available_quantity,
+             manufacture_date,expiry_date,gst_rate)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (vendor_id, name, unit.strip() or "pack", price, quantity,
+             mfg_raw or None, expiry_date, gst_rate))
         conn.commit()
         return True, "Medicine added to vendor catalogue."
     except sqlite3.IntegrityError:
@@ -176,10 +202,12 @@ def create_order(pharmacist_user_id, vendor_id, catalog_id, quantity):
             (pharmacist_user_id, vendor_id, total))
         order_id = cur.lastrowid
         conn.execute("""INSERT INTO vendor_order_items
-            (order_id,catalog_id,medicine_name,quantity,unit_price,expiry_date)
-            VALUES (?,?,?,?,?,?)""",
+            (order_id,catalog_id,medicine_name,quantity,unit_price,
+             manufacture_date,gst_rate,expiry_date)
+            VALUES (?,?,?,?,?,?,?,?)""",
             (order_id, catalog_id, item["medicine_name"], quantity,
-             item["wholesale_price"], item["expiry_date"]))
+             item["wholesale_price"], item["manufacture_date"],
+             item["gst_rate"], item["expiry_date"]))
         conn.commit()
         return True, order_id
     except Exception as exc:
@@ -221,16 +249,156 @@ def _restore_catalog_stock(conn, order_id):
         )
 
 
+def _add_pharmacy_inventory_for_order(conn, order_id, order, items):
+    """Increase pharmacy stock once per dispatched order (idempotent batch numbers)."""
+    vendor_profile = conn.execute(
+        """SELECT va.business_name, va.contact_person, va.phone, va.address,
+                  u.email AS email
+           FROM vendor_accounts va JOIN users u ON u.id=va.user_id WHERE va.id=?""",
+        (order["vendor_id"],)
+    ).fetchone()
+    vendor_name = vendor_profile["business_name"]
+    legacy_vendor = conn.execute(
+        "SELECT id FROM vendors WHERE lower(name)=lower(?)", (vendor_name,)
+    ).fetchone()
+    if legacy_vendor:
+        legacy_vendor_id = legacy_vendor["id"]
+        conn.execute(
+            """UPDATE vendors SET contact_person=?, phone=?, email=?, address=? WHERE id=?""",
+            (vendor_profile["contact_person"], vendor_profile["phone"],
+             vendor_profile["email"], vendor_profile["address"], legacy_vendor_id)
+        )
+    else:
+        legacy_vendor_id = conn.execute(
+            """INSERT INTO vendors(name,contact_person,phone,email,address)
+               VALUES (?,?,?,?,?)""",
+            (vendor_name, vendor_profile["contact_person"], vendor_profile["phone"],
+             vendor_profile["email"], vendor_profile["address"])
+        ).lastrowid
+
+    invoice_id = f"PUR-PORTAL-{order_id:08d}"
+    purchase = conn.execute(
+        "SELECT id FROM purchases WHERE invoice_number IN (?,?)",
+        (invoice_id, f"PO-{order_id}"),
+    ).fetchone()
+    order_subtotal = round(sum(int(it["quantity"]) * float(it["unit_price"]) for it in items), 2)
+    tax_lines = [db.calculate_gst(
+        int(it["quantity"]) * float(it["unit_price"]), float(it["gst_rate"] or 0), "local"
+    ) for it in items]
+    cgst = round(sum(line["cgst_amount"] for line in tax_lines), 2)
+    sgst = round(sum(line["sgst_amount"] for line in tax_lines), 2)
+    igst = 0.0
+    gst_total = round(cgst + sgst, 2)
+    order_total = round(order_subtotal + gst_total, 2)
+    pharmacist = conn.execute(
+        "SELECT username,email FROM users WHERE id=?", (order["pharmacist_user_id"],)
+    ).fetchone()
+    gst_rates = {float(it["gst_rate"] or 0) for it in items}
+    header_gst_rate = next(iter(gst_rates)) if len(gst_rates) == 1 else 0.0
+    if purchase:
+        purchase_id = purchase["id"]
+        conn.execute(
+            """UPDATE purchases SET invoice_number=?, subtotal=?, total_amount=?,
+               gst_rate=?, gst_mode='local', cgst_amount=?, sgst_amount=?, igst_amount=?,
+               payment_method='Credit', payment_status='Pending',
+               pharmacy_name='PharmaCare', pharmacist_name=?, pharmacist_email=?
+               WHERE id=?""",
+            (invoice_id, order_subtotal, order_total, header_gst_rate, cgst, sgst,
+             igst, pharmacist["username"] if pharmacist else "",
+             pharmacist["email"] if pharmacist else "", purchase_id)
+        )
+    else:
+        purchase_id = conn.execute(
+            """INSERT INTO purchases
+               (vendor_id,invoice_number,purchase_date,subtotal,total_amount,gst_rate,
+                gst_mode,cgst_amount,sgst_amount,igst_amount,payment_method,
+                payment_status,pharmacy_name,pharmacist_name,pharmacist_email,notes)
+               VALUES (?,?,?,?,?,?,'local',?,?,?,'Credit','Pending','PharmaCare',?,?,?)""",
+            (
+                legacy_vendor_id,
+                invoice_id,
+                datetime.now().strftime("%Y-%m-%d"),
+                order_subtotal,
+                order_total,
+                header_gst_rate,
+                cgst,
+                sgst,
+                igst,
+                pharmacist["username"] if pharmacist else "",
+                pharmacist["email"] if pharmacist else "",
+                f"Vendor portal order #{order_id} (dispatched)",
+            ),
+        ).lastrowid
+
+    for item_index, item in enumerate(items):
+        batch_no = f"VENDOR-ORDER-{order_id}-ITEM-{item['id']}"
+        if conn.execute(
+            "SELECT id FROM batches WHERE batch_number=?", (batch_no,)
+        ).fetchone():
+            continue
+
+        med = conn.execute(
+            "SELECT id FROM medicines WHERE lower(name)=lower(?) ORDER BY id LIMIT 1",
+            (item["medicine_name"],),
+        ).fetchone()
+        if med:
+            medicine_id = med["id"]
+            batch_count = conn.execute(
+                "SELECT COUNT(*) FROM batches WHERE medicine_id=?", (medicine_id,)
+            ).fetchone()[0]
+            if batch_count == 0:
+                legacy = conn.execute(
+                    "SELECT quantity, expiry_date FROM medicines WHERE id=?", (medicine_id,)
+                ).fetchone()
+                legacy_expiry = (legacy["expiry_date"] or "").strip()
+                try:
+                    datetime.strptime(legacy_expiry, "%Y-%m-%d")
+                except (TypeError, ValueError):
+                    legacy_expiry = ""
+                if int(legacy["quantity"]) > 0 and legacy_expiry:
+                    conn.execute(
+                        """INSERT INTO batches
+                           (medicine_id,batch_number,quantity,cost_price,expiry_date)
+                           VALUES (?,?,?,?,?)""",
+                        (
+                            medicine_id,
+                            f"LEGACY-PO-{order_id}",
+                            int(legacy["quantity"]),
+                            0.0,
+                            legacy_expiry,
+                        ),
+                    )
+        else:
+            medicine_id = conn.execute(
+                """INSERT INTO medicines(name,quantity,price,expiry_date,min_stock)
+                   VALUES (?,0,?,?,10)""",
+                (item["medicine_name"], item["unit_price"], item["expiry_date"]),
+            ).lastrowid
+
+        qty = int(item["quantity"])
+        conn.execute(
+            """INSERT INTO batches
+               (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date,
+                manufacture_date,gst_rate,gst_amount)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (medicine_id, purchase_id, batch_no, qty, item["unit_price"], item["expiry_date"],
+             item["manufacture_date"], item["gst_rate"], tax_lines[item_index]["gst_amount"]),
+        )
+        db._sync_medicine_quantity(conn, medicine_id)
+        conn.execute(
+            "UPDATE vendor_order_items SET received_quantity=? WHERE id=?",
+            (qty, item["id"]),
+        )
+
+
 def transition_order(
     order_id,
     action,
     actor_role,
     actor_id,
     receive_quantity=None,
-    dispatch_batch=None,
-    dispatch_expiry=None,
 ):
-    """Apply an allowed transition. Pharmacy stock changes only on verified receipt (action 'receive')."""
+    """Apply order workflow transitions. Pharmacy inventory increases on vendor dispatch."""
     conn = _conn()
     try:
         order = conn.execute("SELECT * FROM vendor_orders WHERE id=?", (order_id,)).fetchone()
@@ -261,119 +429,20 @@ def transition_order(
                 )
             new_status = "Confirmed"
         elif action == "dispatch" and actor_role == "vendor" and status == "Confirmed":
-            batch = (dispatch_batch or "").strip()
-            expiry = (dispatch_expiry or "").strip()
-            if not batch:
-                return False, "Enter the medicine batch number before dispatch."
-            try:
-                datetime.strptime(expiry, "%Y-%m-%d")
-            except (TypeError, ValueError):
-                return False, "Enter a valid expiry date (YYYY-MM-DD) before dispatch."
-            if expiry < datetime.now().strftime("%Y-%m-%d"):
-                return False, "Dispatch expiry date cannot be in the past."
-            items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
-            # Stock was reserved at confirmation; dispatch records batch/expiry only.
-            # Pharmacy inventory is NOT changed here.
-            for item in items:
-                conn.execute(
-                    """UPDATE vendor_order_items
-                       SET dispatch_batch_number=?, expiry_date=? WHERE id=?""",
-                    (batch, expiry, item["id"]),
-                )
+            items = conn.execute(
+                "SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)
+            ).fetchall()
+            _add_pharmacy_inventory_for_order(conn, order_id, order, items)
             new_status = "Dispatched"
         elif action == "receive" and actor_role == "pharmacist" and status in ("Dispatched", "Partially Received"):
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
             if len(items) != 1:
                 return False, "This receipt screen supports one medicine per order."
             item = items[0]
-            if item["expiry_date"] < datetime.now().strftime("%Y-%m-%d"):
-                return False, "This batch is already expired and cannot be received into stock."
-            outstanding = int(item["quantity"]) - int(item["received_quantity"])
-            try:
-                qty = int(receive_quantity)
-            except (TypeError, ValueError):
-                return False, "Enter the quantity actually received."
-            if qty < 1 or qty > outstanding:
-                return False, f"Received quantity must be between 1 and {outstanding}."
-
-            vendor_profile = conn.execute("SELECT business_name FROM vendor_accounts WHERE id=?",
-                                          (order["vendor_id"],)).fetchone()
-            vendor_name = vendor_profile["business_name"]
-            legacy_vendor = conn.execute("SELECT id FROM vendors WHERE lower(name)=lower(?)",
-                                         (vendor_name,)).fetchone()
-            if legacy_vendor:
-                legacy_vendor_id = legacy_vendor["id"]
+            if int(item["received_quantity"]) >= int(item["quantity"]):
+                new_status = "Received"
             else:
-                legacy_vendor_id = conn.execute("INSERT INTO vendors(name) VALUES (?)",
-                                                (vendor_name,)).lastrowid
-
-            purchase = conn.execute("SELECT id, total_amount FROM purchases WHERE invoice_number=?",
-                                    (f"PO-{order_id}",)).fetchone()
-            received_cost = round(qty * float(item["unit_price"]), 2)
-            if purchase:
-                purchase_id = purchase["id"]
-                conn.execute("UPDATE purchases SET total_amount=total_amount+? WHERE id=?",
-                             (received_cost, purchase_id))
-            else:
-                purchase_id = conn.execute(
-                    """INSERT INTO purchases(vendor_id,invoice_number,purchase_date,total_amount,notes)
-                       VALUES (?,?,?,?,?)""",
-                    (legacy_vendor_id, f"PO-{order_id}", datetime.now().strftime("%Y-%m-%d"),
-                     received_cost, f"Received from vendor portal order #{order_id}")).lastrowid
-
-            med = conn.execute("SELECT id FROM medicines WHERE lower(name)=lower(?) ORDER BY id LIMIT 1",
-                               (item["medicine_name"],)).fetchone()
-            if med:
-                medicine_id = med["id"]
-                # Preserve existing stock if it predates batch tracking.
-                batch_count = conn.execute(
-                    "SELECT COUNT(*) FROM batches WHERE medicine_id=?", (medicine_id,)
-                ).fetchone()[0]
-                if batch_count == 0:
-                    legacy = conn.execute(
-                        "SELECT quantity, expiry_date FROM medicines WHERE id=?", (medicine_id,)
-                    ).fetchone()
-                    legacy_expiry = (legacy["expiry_date"] or "").strip()
-                    try:
-                        datetime.strptime(legacy_expiry, "%Y-%m-%d")
-                    except (TypeError, ValueError):
-                        legacy_expiry = ""
-                    if int(legacy["quantity"]) > 0 and legacy_expiry:
-                        conn.execute(
-                            """INSERT INTO batches
-                               (medicine_id,batch_number,quantity,cost_price,expiry_date)
-                               VALUES (?,?,?,?,?)""",
-                            (medicine_id, f"LEGACY-PO-{order_id}", int(legacy["quantity"]),
-                             0.0, legacy_expiry)
-                        )
-            else:
-                cur = conn.execute("""INSERT INTO medicines(name,quantity,price,expiry_date,min_stock)
-                    VALUES (?,0,?, ?,10)""", (item["medicine_name"], item["unit_price"], item["expiry_date"]))
-                medicine_id = cur.lastrowid
-
-            dispatch_batch = (item["dispatch_batch_number"] or "").strip()
-            if not dispatch_batch:
-                return False, "This order has no vendor batch number; it cannot be received."
-            new_received = int(item["received_quantity"]) + qty
-            batch_no = dispatch_batch
-            existing = conn.execute(
-                """SELECT id FROM batches WHERE medicine_id=? AND batch_number=?""",
-                (medicine_id, batch_no),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    "UPDATE batches SET quantity=quantity+?, cost_price=? WHERE id=?",
-                    (qty, item["unit_price"], existing["id"]),
-                )
-            else:
-                conn.execute("""INSERT INTO batches
-                    (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date)
-                    VALUES (?,?,?,?,?,?)""",
-                    (medicine_id, purchase_id, batch_no, qty, item["unit_price"], item["expiry_date"]))
-            db._sync_medicine_quantity(conn, medicine_id)
-            conn.execute("UPDATE vendor_order_items SET received_quantity=? WHERE id=?",
-                         (new_received, item["id"]))
-            new_status = "Received" if new_received >= int(item["quantity"]) else "Partially Received"
+                return False, "Stock is added when the vendor dispatches. Wait for dispatch, then refresh."
         elif action == "reject" and actor_role == "vendor" and status in ("Pending", "Confirmed"):
             if status == "Confirmed":
                 _restore_catalog_stock(conn, order_id)
@@ -386,6 +455,8 @@ def transition_order(
         conn.execute("UPDATE vendor_orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                      (new_status, order_id))
         conn.commit()
+        if action == "dispatch" and new_status == "Dispatched":
+            send_pharmacist_dispatch_notification(order_id)
         return True, f"Order #{order_id} marked {new_status}."
     except Exception as exc:
         conn.rollback()
@@ -400,9 +471,7 @@ def mark_order_email_status(order_id, status):
     conn.close()
 
 
-def send_order_receipt(order_id, pharmacist_email):
-    """Email confirmation is best-effort and never rolls back a saved order."""
-    import smtp_handler as smtp
+def _order_email_table(order_id):
     items = get_order_items(order_id)
     rows = "".join(
         f"<tr><td>{escape(item['medicine_name'])}</td><td>{item['quantity']}</td>"
@@ -410,6 +479,13 @@ def send_order_receipt(order_id, pharmacist_email):
         for item in items
     )
     total = sum(item["quantity"] * item["unit_price"] for item in items)
+    return rows, total
+
+
+def send_order_receipt(order_id, pharmacist_email):
+    """Email confirmation is best-effort and never rolls back a saved order."""
+    import smtp_handler as smtp
+    rows, total = _order_email_table(order_id)
     body = f"""<h2>Order #{order_id} placed successfully</h2>
     <p>This email confirms order placement; it is not a delivery confirmation.</p>
     <table style="width:100%;border-collapse:collapse" border="1" cellpadding="8">
@@ -420,12 +496,80 @@ def send_order_receipt(order_id, pharmacist_email):
     smtp.send_email_async(pharmacist_email, f"PharmaCare order receipt #{order_id}", smtp._wrap(body), callback)
 
 
+def send_vendor_new_order_notification(order_id):
+    """Notify the vendor by email when a pharmacist places an order."""
+    import smtp_handler as smtp
+    conn = _conn()
+    row = conn.execute(
+        """SELECT o.id, u.username AS pharmacist_name, u.email AS pharmacist_email,
+                  vu.email AS vendor_email, va.business_name
+           FROM vendor_orders o
+           JOIN users u ON u.id = o.pharmacist_user_id
+           JOIN vendor_accounts va ON va.id = o.vendor_id
+           JOIN users vu ON vu.id = va.user_id
+           WHERE o.id=?""",
+        (order_id,),
+    ).fetchone()
+    conn.close()
+    if not row or not row["vendor_email"]:
+        return
+    rows, total = _order_email_table(order_id)
+    body = f"""<h2>New purchase order #{order_id}</h2>
+    <p><strong>Pharmacist:</strong> {escape(row['pharmacist_name'])}</p>
+    <p>Please review and confirm this order in the Vendor Portal.</p>
+    <table style="width:100%;border-collapse:collapse" border="1" cellpadding="8">
+    <tr><th>Medicine</th><th>Quantity</th><th>Unit price</th><th>Subtotal</th></tr>{rows}</table>
+    <p><strong>Total: ₹{total:.2f}</strong></p>"""
+    smtp.send_email_async(
+        row["vendor_email"],
+        f"PharmaCare: new order #{order_id} from {row['pharmacist_name']}",
+        smtp._wrap(body),
+    )
+
+
+def send_pharmacist_dispatch_notification(order_id):
+    """Notify the pharmacist when the vendor dispatches their order."""
+    import smtp_handler as smtp
+    conn = _conn()
+    row = conn.execute(
+        """SELECT o.id, u.username AS pharmacist_name, u.email AS pharmacist_email,
+                  va.business_name
+           FROM vendor_orders o
+           JOIN users u ON u.id = o.pharmacist_user_id
+           JOIN vendor_accounts va ON va.id = o.vendor_id
+           WHERE o.id=?""",
+        (order_id,),
+    ).fetchone()
+    conn.close()
+    if not row or not row["pharmacist_email"]:
+        return
+    rows, total = _order_email_table(order_id)
+    body = f"""<h2>Order #{order_id} dispatched</h2>
+    <p><strong>Vendor:</strong> {escape(row['business_name'])}</p>
+    <p>Your pharmacy inventory has been updated with the items below.</p>
+    <table style="width:100%;border-collapse:collapse" border="1" cellpadding="8">
+    <tr><th>Medicine</th><th>Quantity</th><th>Unit price</th><th>Subtotal</th></tr>{rows}</table>
+    <p><strong>Total: ₹{total:.2f}</strong></p>"""
+    smtp.send_email_async(
+        row["pharmacist_email"],
+        f"PharmaCare: order #{order_id} dispatched by {row['business_name']}",
+        smtp._wrap(body),
+    )
+
+
+def notify_order_placed(order_id, pharmacist_email):
+    """Pharmacist receipt + vendor alert after a successful order."""
+    if pharmacist_email:
+        send_order_receipt(order_id, pharmacist_email)
+    send_vendor_new_order_notification(order_id)
+
+
 def financial_summary():
     conn = _conn()
     sales = conn.execute("SELECT COALESCE(SUM(total_price),0) FROM transactions").fetchone()[0]
     cogs = conn.execute("SELECT COALESCE(SUM(cost_price*quantity),0) FROM transactions").fetchone()[0]
     expenses = conn.execute("SELECT COALESCE(SUM(amount),0) FROM expenses").fetchone()[0]
-    purchases = conn.execute("""SELECT COALESCE(SUM(total_amount),0) FROM purchases""").fetchone()[0]
+    purchases = conn.execute("""SELECT COALESCE(SUM(subtotal),0) FROM purchases""").fetchone()[0]
     conn.close()
     return {"revenue": float(sales or 0), "cogs": float(cogs or 0),
             "gross_profit": float(sales or 0)-float(cogs or 0),

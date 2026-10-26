@@ -1,15 +1,15 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
-import random, string
+from html import escape
 import database as db
+import invoices
 import smtp_handler as smtp
 import styles as st
 
 
 def _gen_bill_no():
-    s = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    return f"BILL-{datetime.now().strftime('%Y%m%d')}-{s}"
+    return db.generate_invoice_id("SALE")
 
 
 class BillingFrame(tk.Frame):
@@ -18,6 +18,7 @@ class BillingFrame(tk.Frame):
         self._user_email = user_email
         user = db.get_user_by_email(user_email) if user_email else None
         self._user_id = user["id"] if user else None
+        self._pharmacist_name = user["username"] if user else ""
         self._items = []
         self._build_ui()
         self._load_medicines()
@@ -116,16 +117,28 @@ class BillingFrame(tk.Frame):
         body = tk.Frame(p, bg=st.COLORS["white"])
         body.pack(fill="both", expand=True, padx=20, pady=20)
 
-        tk.Label(body, text="Bill Number", font=st.FONTS["body_bold"],
+        tk.Label(body, text="Invoice ID", font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
         self._bill_no = tk.StringVar(value=_gen_bill_no())
         tk.Entry(body, textvariable=self._bill_no, state="readonly", **st.ENTRY
                  ).pack(fill="x", ipady=6, pady=(4,12))
 
+        tk.Label(body, text="Customer Name", font=st.FONTS["body_bold"],
+                 bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
+        self._customer_name = tk.StringVar(value="Walk-in Customer")
+        tk.Entry(body, textvariable=self._customer_name, **st.ENTRY).pack(
+            fill="x", ipady=5, pady=(4, 8))
+
         tk.Label(body, text="Customer Email (receipt sent here)", font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
         self._cust = tk.StringVar(value="")
         tk.Entry(body, textvariable=self._cust, **st.ENTRY).pack(fill="x", ipady=6, pady=(4,16))
+
+        tk.Label(body, text="Customer Address (optional)", font=st.FONTS["body_bold"],
+                 bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(anchor="w")
+        self._customer_address = tk.StringVar()
+        tk.Entry(body, textvariable=self._customer_address, **st.ENTRY).pack(
+            fill="x", ipady=5, pady=(4, 10))
 
         tk.Frame(body, bg=st.COLORS["border"], height=1).pack(fill="x", pady=4)
 
@@ -141,8 +154,9 @@ class BillingFrame(tk.Frame):
 
         tot_row("Subtotal:",  "_subtotal")
         tot_row("Discount (₹):", "_disc_lbl", st.COLORS["warning"])
+        tot_row("GST:", "_gst_lbl")
         tk.Frame(body, bg=st.COLORS["border"], height=1).pack(fill="x", pady=4)
-        tot_row("TOTAL:",     "_total_lbl", st.COLORS["primary"])
+        tot_row("GRAND TOTAL:", "_total_lbl", st.COLORS["primary"])
 
         dr = tk.Frame(body, bg=st.COLORS["white"]); dr.pack(fill="x", pady=(8,4))
         tk.Label(dr, text="Discount (₹):", font=st.FONTS["body"],
@@ -152,11 +166,41 @@ class BillingFrame(tk.Frame):
         tk.Entry(dr, textvariable=self._disc_var, width=10, **st.ENTRY
                  ).pack(side="right", ipady=4)
 
+        gst_row = tk.Frame(body, bg=st.COLORS["white"])
+        gst_row.pack(fill="x", pady=3)
+        tk.Label(gst_row, text="GST Rate (%)", font=st.FONTS["small"],
+                 bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(side="left")
+        self._gst_var = tk.StringVar(value="0")
+        self._gst_var.trace_add("write", lambda *_: self._update_totals())
+        tk.Entry(gst_row, textvariable=self._gst_var, width=8, **st.ENTRY).pack(side="right")
+
+        def option_row(label, var, values):
+            row = tk.Frame(body, bg=st.COLORS["white"])
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text=label, font=st.FONTS["small"],
+                     bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(side="left")
+            ttk.Combobox(row, textvariable=var, state="readonly", values=values,
+                         width=16).pack(side="right")
+
+        self._gst_mode_var = tk.StringVar(value="CGST + SGST")
+        option_row("GST Type", self._gst_mode_var, ("CGST + SGST", "IGST"))
+        self._gst_mode_var.trace_add("write", lambda *_: self._update_totals())
+        self._payment_method_var = tk.StringVar(value="Cash")
+        option_row("Payment Method", self._payment_method_var,
+                   ("Cash", "UPI", "Card", "Bank Transfer", "Credit"))
+        self._payment_status_var = tk.StringVar(value="Paid")
+        option_row("Payment Status", self._payment_status_var,
+                   ("Paid", "Pending", "Partially Paid"))
+
         self._count_var = tk.StringVar(value="0 item(s)")
         tk.Label(body, textvariable=self._count_var, font=st.FONTS["small"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_light"]).pack(anchor="e", pady=(4,0))
 
         tk.Frame(body, bg=st.COLORS["white"]).pack(expand=True)
+
+        tk.Button(body, text="View Sales Invoices",
+                  command=lambda: invoices.open_invoice_history(self.winfo_toplevel(), "sale"),
+                  **st.BUTTON["secondary"]).pack(fill="x", pady=(0, 8))
 
         gb = tk.Button(body, text="💳  Generate Bill",
                        command=self._generate, **st.BUTTON["primary"])
@@ -244,10 +288,18 @@ class BillingFrame(tk.Frame):
             disc = max(float(self._disc_var.get() or 0), 0)
         except ValueError:
             disc = 0
-        total = max(sub - disc, 0)
+        try:
+            gst_rate = float(self._gst_var.get() or 0)
+            tax = db.calculate_gst(
+                max(sub - disc, 0), gst_rate,
+                "interstate" if self._gst_mode_var.get() == "IGST" else "local"
+            )
+        except ValueError:
+            tax = {"gst_amount": 0.0, "grand_total": max(sub - disc, 0)}
         self._subtotal.set(f"₹{sub:.2f}")
         self._disc_lbl.set(f"₹{disc:.2f}")
-        self._total_lbl.set(f"₹{total:.2f}")
+        self._gst_lbl.set(f"₹{tax['gst_amount']:.2f}")
+        self._total_lbl.set(f"₹{tax['grand_total']:.2f}")
         self._count_var.set(f"{len(self._items)} item(s)")
 
     def _clear(self):
@@ -268,17 +320,38 @@ class BillingFrame(tk.Frame):
         try:
             disc = max(float(self._disc_var.get() or 0), 0)
         except ValueError:
-            disc = 0
-        sub   = sum(i["total"] for i in self._items)
-        total = max(sub - disc, 0)
+            messagebox.showerror("Discount", "Enter a valid discount amount.",
+                                 parent=self.winfo_toplevel()); return
+        sub = sum(i["total"] for i in self._items)
+        disc = min(disc, sub)
+        try:
+            gst_rate = float(self._gst_var.get() or 0)
+            tax = db.calculate_gst(
+                max(sub - disc, 0), gst_rate,
+                "interstate" if self._gst_mode_var.get() == "IGST" else "local"
+            )
+        except ValueError as exc:
+            messagebox.showerror("GST", str(exc), parent=self.winfo_toplevel()); return
+        total = tax["grand_total"]
+        customer_name = self._customer_name.get().strip() or "Walk-in Customer"
+        customer_address = self._customer_address.get().strip()
 
         if not messagebox.askyesno("Confirm Bill",
-            f"Bill: {bill_no}\nReceipt email: {cust}\n"
-            f"Items: {len(self._items)}\nTotal: ₹{total:.2f}\n\nGenerate?",
+            f"Invoice: {bill_no}\nCustomer: {customer_name}\nReceipt email: {cust}\n"
+            f"Items: {len(self._items)}\nSubtotal: ₹{sub:.2f}\n"
+            f"Discount: ₹{disc:.2f}\nGST: ₹{tax['gst_amount']:.2f}\n"
+            f"Grand Total: ₹{total:.2f}\nPayment: {self._payment_status_var.get()}\n\nGenerate?",
             parent=self.winfo_toplevel()): return
 
         ok, result = db.record_bill(
-            bill_no, cust, self._items, discount=disc, user_id=self._user_id
+            bill_no, cust, self._items, discount=disc, user_id=self._user_id,
+            gst_rate=gst_rate,
+            gst_mode="interstate" if self._gst_mode_var.get() == "IGST" else "local",
+            payment_method=self._payment_method_var.get(),
+            payment_status=self._payment_status_var.get(),
+            customer_name=customer_name, customer_address=customer_address,
+            pharmacist_name=self._pharmacist_name,
+            pharmacist_email=self._user_email,
         )
         if not ok:
             messagebox.showerror("Bill Error", str(result),
@@ -291,21 +364,11 @@ class BillingFrame(tk.Frame):
             if med and med["quantity"] <= med["min_stock"]:
                 low_stock_meds.append(med)
 
-        ReceiptWindow(self.winfo_toplevel(), bill_no, cust,
-                      self._items, sub, disc, total)
+        invoice = db.get_sales_invoice(bill_no)
+        if invoice:
+            invoices.InvoiceDetailWindow(self.winfo_toplevel(), invoice, "sale")
         # Email the completed receipt to the customer (best effort).
-        receipt_rows = "".join(
-            f"<tr><td>{item['name']}</td><td>{item['qty']}</td>"
-            f"<td>₹{item['price']:.2f}</td><td>₹{item['total']:.2f}</td></tr>"
-            for item in self._items
-        )
-        receipt_html = (
-            f"<h2>PharmaCare Receipt</h2><p>Bill: {bill_no}</p>"
-            f"<p>Receipt emailed to: {cust}</p><table border='1' cellpadding='6'>"
-            "<tr><th>Medicine</th><th>Qty</th><th>Price</th><th>Total</th></tr>"
-            f"{receipt_rows}</table><p>Subtotal: ₹{sub:.2f}</p>"
-            f"<p>Discount: ₹{disc:.2f}</p><h3>Total: ₹{total:.2f}</h3>"
-        )
+        receipt_html = invoices.invoice_email_html(invoice) if invoice else ""
         def receipt_email_result(ok, msg):
             # Email callbacks run on a worker thread; schedule Tk updates on the UI thread.
             self.after(0, lambda: messagebox.showinfo(
@@ -314,10 +377,11 @@ class BillingFrame(tk.Frame):
                 parent=self.winfo_toplevel()
             ))
 
-        smtp.send_email_async(
-            cust, f"PharmaCare receipt {bill_no}",
-            smtp._wrap(receipt_html), callback=receipt_email_result
-        )
+        if receipt_html:
+            smtp.send_email_async(
+                cust, f"PharmaCare invoice {bill_no}",
+                smtp._wrap(receipt_html), callback=receipt_email_result
+            )
         if low_stock_meds and self._user_email:
             smtp.send_low_stock_alert(self._user_email, low_stock_meds)
         self._clear()
