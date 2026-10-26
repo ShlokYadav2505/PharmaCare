@@ -104,8 +104,8 @@ class VendorPortalFrame(tk.Frame):
                 entry.bind("<Escape>", lambda _event: self._close_name_suggestions())
                 entry.bind("<FocusOut>", lambda _event: self.after(120, self._close_name_suggestions))
             form.columnconfigure(column, weight=1)
-        tk.Button(form, text="Add to catalogue", command=self._add_catalog
-                  ).grid(row=2, column=2, padx=4, pady=(8, 2), sticky="e")
+        tk.Button(form, text="Add to catalogue", command=self._add_catalog, bg="#2E7D32",
+                  fg="white", padx=12).grid(row=2, column=2, padx=4, pady=(8, 2), sticky="e")
         tk.Label(self.body, text="Your catalogue", bg="#F4F7F4",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.catalog_tree = self._table(self.body, [("name","Medicine",220),("unit","Unit",90),
@@ -122,10 +122,8 @@ class VendorPortalFrame(tk.Frame):
             ("Mark dispatched", "dispatch"),
             ("Refresh", "refresh"),
         ]:
-            tk.Button(
-                buttons, text=label,
-                command=(self.refresh if action == "refresh" else lambda a=action: self._act(a)),
-            ).pack(side="left", padx=(0, 8))
+            tk.Button(buttons, text=label, command=(self.refresh if action=="refresh" else lambda a=action: self._act(a)),
+                      padx=12, pady=5).pack(side="left", padx=(0,8))
         self.refresh()
 
     def _pharmacist_view(self):
@@ -139,10 +137,10 @@ class VendorPortalFrame(tk.Frame):
         tk.Label(form, text="Order quantity:", bg="#F4F7F4").pack(side="left")
         self.order_qty = tk.StringVar(value="1")
         tk.Entry(form, textvariable=self.order_qty, width=10).pack(side="left", padx=8)
-        tk.Button(form, text="Place order & email receipt", command=self._place_order
-                  ).pack(side="left", padx=4)
+        tk.Button(form, text="Place order & email receipt", command=self._place_order,
+                  bg="#2E7D32", fg="white", padx=12, pady=5).pack(side="left", padx=4)
         tk.Button(form, text="Cancel pending order", command=lambda: self._act("cancel"),
-                  ).pack(side="left", padx=4)
+                  padx=12, pady=5).pack(side="left", padx=4)
         tk.Label(self.body, text="My orders", bg="#F4F7F4",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.orders_tree = self._table(self.body, [("id","Order #",80),("vendor","Vendor",180),

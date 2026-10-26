@@ -60,24 +60,69 @@ FONTS = {
 }
 
 BUTTON = {
-    # Keep the platform's native Tk button appearance throughout the app.
-    "primary": {"relief": "raised", "padx": 8, "pady": 3},
-    "secondary": {"relief": "raised", "padx": 8, "pady": 3},
-    "danger": {"relief": "raised", "padx": 8, "pady": 3},
-    "warning": {"relief": "raised", "padx": 8, "pady": 3},
-    "sm_primary": {"relief": "raised", "padx": 6, "pady": 2},
-    "sm_danger": {"relief": "raised", "padx": 6, "pady": 2},
-    "link": {"relief": "raised", "padx": 6, "pady": 2},
+    "primary": {
+        "bg": COLORS["primary"], "fg": COLORS["text_white"],
+        "font": FONTS["button"], "relief": "flat", "cursor": "hand2",
+        "padx": 12, "pady": 6, "bd": 0,
+        "activebackground": COLORS["primary_light"],
+        "activeforeground": COLORS["text_white"],
+    },
+    "secondary": {
+        "bg": COLORS["secondary"], "fg": COLORS["text_dark"],
+        "font": FONTS["button"], "relief": "flat", "cursor": "hand2",
+        "padx": 12, "pady": 6, "bd": 0,
+        "activebackground": "#BDBDBD",
+        "activeforeground": COLORS["text_dark"],
+    },
+    "danger": {
+        "bg": COLORS["danger"], "fg": COLORS["text_white"],
+        "font": FONTS["button"], "relief": "flat", "cursor": "hand2",
+        "padx": 12, "pady": 6, "bd": 0,
+        "activebackground": "#B71C1C",
+        "activeforeground": COLORS["text_white"],
+    },
+    "warning": {
+        "bg": COLORS["warning"], "fg": COLORS["text_white"],
+        "font": FONTS["button"], "relief": "flat", "cursor": "hand2",
+        "padx": 12, "pady": 6, "bd": 0,
+        "activebackground": "#BF360C",
+        "activeforeground": COLORS["text_white"],
+    },
+    "sm_primary": {
+        "bg": COLORS["primary"], "fg": COLORS["text_white"],
+        "font": FONTS["small_bold"], "relief": "flat", "cursor": "hand2",
+        "padx": 9, "pady": 4, "bd": 0,
+        "activebackground": COLORS["primary_light"],
+        "activeforeground": COLORS["text_white"],
+    },
+    "sm_danger": {
+        "bg": COLORS["danger"], "fg": COLORS["text_white"],
+        "font": FONTS["small_bold"], "relief": "flat", "cursor": "hand2",
+        "padx": 9, "pady": 4, "bd": 0,
+        "activebackground": "#B71C1C",
+        "activeforeground": COLORS["text_white"],
+    },
+    "link": {
+        "bg": COLORS["white"], "fg": COLORS["primary"],
+        "font": FONTS["small"], "relief": "flat", "cursor": "hand2",
+        "padx": 0, "pady": 0, "bd": 0,
+        "activebackground": COLORS["white"],
+        "activeforeground": COLORS["primary_dark"],
+    },
 }
 
-ENTRY = {}
+ENTRY = {
+    "font": FONTS["entry"],
+    "bg": COLORS["entry_bg"],
+    "fg": COLORS["text_dark"],
+    "relief": "solid",
+    "bd": 1,
+    "highlightthickness": 0,
+    "insertbackground": COLORS["primary"],
+}
 
 
 def add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
-    # Retain the existing sidebar hover behavior; content buttons stay native.
-    if normal_bg != COLORS["sidebar_bg"]:
-        return
-
     def on_enter(event):
         widget.config(bg=hover_bg)
         if hover_fg:
@@ -93,4 +138,26 @@ def add_hover(widget, normal_bg, hover_bg, normal_fg=None, hover_fg=None):
 
 
 def apply_treeview_style(style, tree_name="Custom.Treeview"):
-    return "Treeview"
+    style.configure(
+        tree_name,
+        background=COLORS["row_odd"],
+        foreground=COLORS["text_dark"],
+        rowheight=24,
+        fieldbackground=COLORS["row_odd"],
+        font=FONTS["table_body"],
+        borderwidth=0,
+    )
+    style.configure(
+        f"{tree_name}.Heading",
+        background=COLORS["table_header"],
+        foreground=COLORS["table_header_fg"],
+        font=FONTS["table_header"],
+        relief="flat",
+        padding=(6, 4),
+    )
+    style.map(
+        tree_name,
+        background=[("selected", COLORS["row_select"])],
+        foreground=[("selected", COLORS["row_select_fg"])],
+    )
+    return tree_name

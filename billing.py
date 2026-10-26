@@ -85,7 +85,7 @@ class BillingFrame(tk.Frame):
         lbl_row.grid(row=2, column=0, sticky="ew")
         tk.Label(lbl_row, text="Bill Items", font=st.FONTS["subheading"],
                  bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).pack(side="left")
-        rb = tk.Button(lbl_row, text="Remove", command=self._remove_item,
+        rb = tk.Button(lbl_row, text="🗑 Remove", command=self._remove_item,
                        **st.BUTTON["sm_danger"])
         rb.pack(side="right")
 
@@ -111,7 +111,7 @@ class BillingFrame(tk.Frame):
     def _build_right(self, p):
         hdr = tk.Frame(p, bg=st.COLORS["primary_dark"])
         hdr.pack(fill="x")
-        tk.Label(hdr, text="Bill Summary", font=st.FONTS["subheading"],
+        tk.Label(hdr, text="📋  Bill Summary", font=st.FONTS["subheading"],
                  bg=st.COLORS["primary_dark"], fg=st.COLORS["white"]).pack(pady=14)
 
         body = tk.Frame(p, bg=st.COLORS["white"])
@@ -177,12 +177,12 @@ class BillingFrame(tk.Frame):
                   command=lambda: invoices.open_invoice_history(self.winfo_toplevel(), "sale"),
                   **st.BUTTON["secondary"]).pack(fill="x", pady=(0, 8))
 
-        gb = tk.Button(body, text="Generate Bill",
+        gb = tk.Button(body, text="💳  Generate Bill",
                        command=self._generate, **st.BUTTON["primary"])
         gb.pack(fill="x", pady=(0,8))
         st.add_hover(gb, st.COLORS["primary"], st.COLORS["primary_dark"])
 
-        cb = tk.Button(body, text="Clear Bill",
+        cb = tk.Button(body, text="🗑  Clear Bill",
                        command=self._clear, **st.BUTTON["danger"])
         cb.pack(fill="x")
         st.add_hover(cb, st.COLORS["danger"], "#B71C1C")

@@ -35,7 +35,7 @@ class ExpensesFrame(tk.Frame):
         st.add_hover(add, st.COLORS["primary"], st.COLORS["primary_dark"])
 
         self._del_btn = tk.Button(
-            bb, text="Delete", command=self._do_delete,
+            bb, text="🗑 Delete", command=self._do_delete,
             state="disabled", **st.BUTTON["danger"]
         )
         self._del_btn.pack(side="left")

@@ -29,7 +29,7 @@ class ReportsFrame(tk.Frame):
                  bg=st.COLORS["background"], fg=st.COLORS["text_dark"]).pack(side="left")
         tk.Button(top, text="View Invoice", command=self._open_invoice,
                   **st.BUTTON["secondary"]).pack(side="right", padx=(8, 0))
-        tk.Button(top, text="Export CSV", command=self._export,
+        tk.Button(top, text="📥 Export CSV", command=self._export,
                   **st.BUTTON["secondary"]).pack(side="right")
 
         # Tab selector
@@ -38,7 +38,8 @@ class ReportsFrame(tk.Frame):
         tabs.grid(row=1, column=0, sticky="ew", padx=20, pady=(0,8))
         self._tab_btns = {}
         for label, key in self.TABS:
-            b = tk.Button(tabs, text=label,
+            b = tk.Button(tabs, text=label, font=st.FONTS["body_bold"],
+                          relief="flat", cursor="hand2", padx=18, pady=10, bd=0,
                           command=lambda k=key: self._switch(k))
             b.pack(side="left")
             self._tab_btns[key] = b
@@ -60,14 +61,17 @@ class ReportsFrame(tk.Frame):
         self._to = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
         tk.Entry(self._filter, textvariable=self._to, width=13, **st.ENTRY
                  ).grid(row=0, column=3, ipady=5, padx=(0,12))
-        rb = tk.Button(self._filter, text="Run",
+        rb = tk.Button(self._filter, text="🔍 Run",
                        command=lambda: self._load(self._current), **st.BUTTON["sm_primary"])
         rb.grid(row=0, column=4, padx=(0,8))
         st.add_hover(rb, st.COLORS["primary"], st.COLORS["primary_dark"])
         for label, days in [("Today",0),("7 Days",7),("30 Days",30)]:
-            b = tk.Button(self._filter, text=label,
-                          command=lambda d=days: self._quick(d), **st.BUTTON["secondary"])
+            b = tk.Button(self._filter, text=label, font=st.FONTS["small"],
+                          bg=st.COLORS["light_green"], fg=st.COLORS["primary"],
+                          relief="flat", cursor="hand2", padx=8, pady=4, bd=0,
+                          command=lambda d=days: self._quick(d))
             b.grid(row=0, column=5+[0,7,30].index(days), padx=4)
+            st.add_hover(b, st.COLORS["light_green"], st.COLORS["secondary"])
 
         # Treeview
         tf = tk.Frame(self, bg=st.COLORS["white"],
@@ -97,7 +101,8 @@ class ReportsFrame(tk.Frame):
 
     def _highlight(self, key):
         for k, b in self._tab_btns.items():
-            b.config(relief="sunken" if k == key else "raised")
+            b.config(bg=st.COLORS["primary"] if k==key else st.COLORS["white"],
+                     fg=st.COLORS["white"]   if k==key else st.COLORS["text_medium"])
 
     def _switch(self, key):
         self._current = key
