@@ -1,10 +1,10 @@
-"""Invoice history, detail views, PDF export, and printing for PharmaCare."""
+"""Invoice history, detail views, and printing for PharmaCare."""
 import os
 import tempfile
 import textwrap
 import tkinter as tk
 from html import escape
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 import database as db
 import styles as st
@@ -141,8 +141,8 @@ def _pdf_escape(text):
     return _pdf_safe(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
-def export_invoice_pdf(invoice, path, kind):
-    """Write a dependency-free, paginated PDF invoice using the built-in Helvetica font."""
+def _write_print_document(invoice, path, kind):
+    """Create the temporary print document used by the Print action."""
     wrapped = []
     for line in _invoice_lines(invoice, kind):
         wrapped.extend(textwrap.wrap(_pdf_safe(line), width=92) or [""])
@@ -278,33 +278,17 @@ class InvoiceDetailWindow(tk.Toplevel):
 
         actions = tk.Frame(self, bg=st.COLORS["background"])
         actions.pack(fill="x", padx=18, pady=(0, 14))
-        tk.Button(actions, text="Export PDF", command=self._export_pdf,
-                  **st.BUTTON["secondary"]).pack(side="left", padx=(0, 8))
         tk.Button(actions, text="Print", command=self._print,
                   **st.BUTTON["primary"]).pack(side="left")
         tk.Button(actions, text="Close", command=self.destroy,
                   **st.BUTTON["secondary"]).pack(side="right")
-
-    def _export_pdf(self):
-        path = filedialog.asksaveasfilename(
-            parent=self, title="Export invoice as PDF", defaultextension=".pdf",
-            initialfile=f"{self.invoice.get('invoice_number', 'invoice')}.pdf",
-            filetypes=[("PDF document", "*.pdf")]
-        )
-        if not path:
-            return
-        try:
-            export_invoice_pdf(self.invoice, path, self.kind)
-            messagebox.showinfo("Invoice exported", f"PDF saved to:\n{path}", parent=self)
-        except OSError as exc:
-            messagebox.showerror("PDF export failed", str(exc), parent=self)
 
     def _print(self):
         path = None
         try:
             fd, path = tempfile.mkstemp(prefix="pharmacare_invoice_", suffix=".pdf")
             os.close(fd)
-            export_invoice_pdf(self.invoice, path, self.kind)
+            _write_print_document(self.invoice, path, self.kind)
             if os.name == "nt":
                 os.startfile(path, "print")
             else:
