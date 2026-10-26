@@ -110,8 +110,10 @@ class ExpensesFrame(tk.Frame):
         if ok:
             self.refresh()
             messagebox.showinfo("Success", msg, parent=self.winfo_toplevel())
+            return True
         else:
             messagebox.showerror("Error", msg, parent=self.winfo_toplevel())
+            return False
 
     def _do_delete(self):
         if not self._selected_id:
@@ -136,7 +138,7 @@ class ExpenseDialog(tk.Toplevel):
         self.configure(bg=st.COLORS["white"])
         self._on_save = on_save
         self._build_ui()
-        self._center(400, 380)
+        self._center(420, 470)
 
     def _center(self, w, h):
         self.update_idletasks()
@@ -179,7 +181,8 @@ class ExpenseDialog(tk.Toplevel):
         tk.Button(
             br, text="Cancel", command=self.destroy, **st.BUTTON["secondary"]
         ).pack(side="left")
-        sb = tk.Button(br, text="Save", command=self._save, **st.BUTTON["primary"])
+        sb = tk.Button(br, text="Add Expense", command=self._save,
+                       **st.BUTTON["primary"])
         sb.pack(side="right")
         st.add_hover(sb, st.COLORS["primary"], st.COLORS["primary_dark"])
 
@@ -196,5 +199,5 @@ class ExpenseDialog(tk.Toplevel):
         except ValueError as e:
             self._msg.set(str(e))
             return
-        self._on_save(cat, self._desc.get().strip(), amt, d)
-        self.destroy()
+        if self._on_save(cat, self._desc.get().strip(), amt, d):
+            self.destroy()
