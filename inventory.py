@@ -282,7 +282,7 @@ class MedicineDialog(tk.Toplevel):
                  bg=st.COLORS["primary"], fg=st.COLORS["white"]).pack(pady=14)
         body = tk.Frame(self, bg=st.COLORS["white"])
         body.pack(fill="both", expand=True, pady=14)
-        self._name  = self._field(body, "Medicine Name *")
+        self._name_var = self._field(body, "Medicine Name *")
         self._qty   = self._field(body, "Quantity *")
         self._price = self._field(body, "Unit Price (₹) *")
         self._exp   = self._field(body, "Expiry Date (YYYY-MM-DD) *")
@@ -304,7 +304,7 @@ class MedicineDialog(tk.Toplevel):
         """Display prefix-ranked, case-insensitive medicine suggestions."""
         if self._is_edit or not hasattr(self, "_name_entry"):
             return
-        query = self._name.get().strip().casefold()
+        query = self._name_var.get().strip().casefold()
         if not query:
             self._close_suggestions()
             return
@@ -358,7 +358,7 @@ class MedicineDialog(tk.Toplevel):
         if self._suggest_list is not None:
             selection = self._suggest_list.curselection()
             if selection:
-                self._name.set(self._suggest_list.get(selection[0]))
+                self._name_var.set(self._suggest_list.get(selection[0]))
                 self._close_suggestions()
                 self._name_entry.focus_set()
                 self._name_entry.icursor("end")
@@ -392,14 +392,14 @@ class MedicineDialog(tk.Toplevel):
         self._suggest_list = None
 
     def _populate(self, m):
-        self._name.set(m["name"]); self._qty.set(str(m["quantity"]))
+        self._name_var.set(m["name"]); self._qty.set(str(m["quantity"]))
         self._price.set(str(m["price"])); self._exp.set(m["expiry_date"])
         self._minst.set(str(m["min_stock"]))
 
     def _save(self):
         self._close_suggestions()
         try:
-            name  = self._name.get().strip()
+            name  = self._name_var.get().strip()
             qty   = int(self._qty.get().strip())
             price = float(self._price.get().strip())
             exp   = self._exp.get().strip()

@@ -96,7 +96,12 @@ class VendorPortalFrame(tk.Frame):
             ("total","Total ₹",120),("status","Status",150),("date","Placed",160)], 5)
         buttons = tk.Frame(self.body, bg="#F4F7F4")
         buttons.pack(fill="x")
-        for label, action in [("Confirm selected", "confirm"), ("Reject selected", "reject"), ("Mark dispatched", "dispatch"), ("Refresh", "refresh")]:
+        for label, action in [
+            ("Confirm selected", "confirm"),
+            ("Reject selected", "reject"),
+            ("Dispatch (batch & expiry)", "dispatch"),
+            ("Refresh", "refresh"),
+        ]:
             tk.Button(buttons, text=label, command=(self.refresh if action=="refresh" else lambda a=action: self._act(a)),
                       padx=12, pady=5).pack(side="left", padx=(0,8))
         self.refresh()
@@ -114,7 +119,7 @@ class VendorPortalFrame(tk.Frame):
         tk.Entry(form, textvariable=self.order_qty, width=10).pack(side="left", padx=8)
         tk.Button(form, text="Place order & email receipt", command=self._place_order,
                   bg="#2E7D32", fg="white", padx=12, pady=5).pack(side="left", padx=4)
-        tk.Button(form, text="Receive selected dispatched order", command=self._receive_selected,
+        tk.Button(form, text="Receive order", command=self._receive_selected,
                   padx=12, pady=5).pack(side="left", padx=4)
         tk.Button(form, text="Cancel pending order", command=lambda: self._act("cancel"),
                   padx=12, pady=5).pack(side="left", padx=4)
@@ -174,10 +179,26 @@ class VendorPortalFrame(tk.Frame):
         if remaining <= 0:
             messagebox.showinfo("Receive order", "This order has already been fully received.", parent=self)
             return
+        batch = (item["dispatch_batch_number"] if "dispatch_batch_number" in item.keys() else "") or ""
+        if not batch.strip():
+            messagebox.showerror(
+                "Receive order",
+                "This order is not dispatched with a batch number yet.",
+                parent=self,
+            )
+            return
         qty = simpledialog.askinteger(
             "Verify delivery",
-            f"Ordered: {item['quantity']}\\nAlready received: {item['received_quantity']}\\nStill expected: {remaining}\\n\\nEnter the quantity physically received now:",
-            parent=self, minvalue=1, maxvalue=remaining
+            f"Medicine: {item['medicine_name']}\n"
+            f"Vendor batch: {batch}\n"
+            f"Expiry: {item['expiry_date']}\n\n"
+            f"Ordered: {item['quantity']}\n"
+            f"Already received: {item['received_quantity']}\n"
+            f"Still expected: {remaining}\n\n"
+            "Confirm these match the shipment, then enter the quantity received now:",
+            parent=self,
+            minvalue=1,
+            maxvalue=remaining,
         )
         if qty is None:
             return
@@ -193,7 +214,30 @@ class VendorPortalFrame(tk.Frame):
         order_id = self._selected_id(tree)
         if order_id is None:
             return
-        ok, msg = vs.transition_order(order_id, action, self.role, self.user_id)
+        dispatch_batch = dispatch_expiry = None
+        if action == "dispatch":
+            dispatch_batch = simpledialog.askstring(
+                "Dispatch order",
+                "Enter the medicine batch number for this shipment:",
+                parent=self,
+            )
+            if dispatch_batch is None:
+                return
+            dispatch_expiry = simpledialog.askstring(
+                "Dispatch order",
+                "Enter expiry date (YYYY-MM-DD):",
+                parent=self,
+            )
+            if dispatch_expiry is None:
+                return
+        ok, msg = vs.transition_order(
+            order_id,
+            action,
+            self.role,
+            self.user_id,
+            dispatch_batch=dispatch_batch,
+            dispatch_expiry=dispatch_expiry,
+        )
         if not ok:
             messagebox.showerror("Order", msg, parent=self)
         else:

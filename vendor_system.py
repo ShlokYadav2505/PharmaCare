@@ -70,6 +70,12 @@ def initialize_vendor_system():
     )""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_vendor_orders_vendor ON vendor_orders(vendor_id, status)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_vendor_items_order ON vendor_order_items(order_id)")
+    cur.execute("PRAGMA table_info(vendor_order_items)")
+    item_cols = {row["name"] for row in cur.fetchall()}
+    if "dispatch_batch_number" not in item_cols:
+        cur.execute(
+            "ALTER TABLE vendor_order_items ADD COLUMN dispatch_batch_number TEXT NOT NULL DEFAULT ''"
+        )
     conn.commit()
     conn.close()
 
@@ -142,9 +148,6 @@ def get_catalog(vendor_id=None):
             JOIN vendor_accounts v ON v.id=c.vendor_id
             WHERE c.available_quantity > 0 AND c.expiry_date >= date('now')
             ORDER BY c.medicine_name""").fetchall()
-        print("PHARMACIST CATALOGUE ROWS:", len(rows))
-        for row in rows:
-            print(dict(row))
     else:
         rows = conn.execute("SELECT * FROM vendor_catalog WHERE vendor_id=? ORDER BY medicine_name", (vendor_id,)).fetchall()
     conn.close()
@@ -208,8 +211,26 @@ def get_order_items(order_id):
     return rows
 
 
-def transition_order(order_id, action, actor_role, actor_id, receive_quantity=None):
-    """Apply an allowed transition. Pharmacy stock changes only on verified receipt."""
+def _restore_catalog_stock(conn, order_id):
+    items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
+    for item in items:
+        conn.execute(
+            """UPDATE vendor_catalog SET available_quantity=available_quantity+?,
+               updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (item["quantity"], item["catalog_id"]),
+        )
+
+
+def transition_order(
+    order_id,
+    action,
+    actor_role,
+    actor_id,
+    receive_quantity=None,
+    dispatch_batch=None,
+    dispatch_expiry=None,
+):
+    """Apply an allowed transition. Pharmacy stock changes only on verified receipt (action 'receive')."""
     conn = _conn()
     try:
         order = conn.execute("SELECT * FROM vendor_orders WHERE id=?", (order_id,)).fetchone()
@@ -224,63 +245,49 @@ def transition_order(order_id, action, actor_role, actor_id, receive_quantity=No
 
         status = order["status"]
         if action == "confirm" and actor_role == "vendor" and status == "Pending":
+            items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
+            for item in items:
+                stock = conn.execute(
+                    "SELECT available_quantity FROM vendor_catalog WHERE id=?",
+                    (item["catalog_id"],),
+                ).fetchone()
+                if not stock or stock["available_quantity"] < item["quantity"]:
+                    return False, "Not enough catalogue stock to confirm and reserve this order."
+            for item in items:
+                conn.execute(
+                    """UPDATE vendor_catalog SET available_quantity=available_quantity-?,
+                       updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (item["quantity"], item["catalog_id"]),
+                )
             new_status = "Confirmed"
         elif action == "dispatch" and actor_role == "vendor" and status == "Confirmed":
+            batch = (dispatch_batch or "").strip()
+            expiry = (dispatch_expiry or "").strip()
+            if not batch:
+                return False, "Enter the medicine batch number before dispatch."
+            try:
+                datetime.strptime(expiry, "%Y-%m-%d")
+            except (TypeError, ValueError):
+                return False, "Enter a valid expiry date (YYYY-MM-DD) before dispatch."
+            if expiry < datetime.now().strftime("%Y-%m-%d"):
+                return False, "Dispatch expiry date cannot be in the past."
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
-            # Deduct wholesale stock at dispatch, not at confirmation.
+            # Stock was reserved at confirmation; dispatch records batch/expiry only.
+            # Pharmacy inventory is NOT changed here.
             for item in items:
-                stock = conn.execute("SELECT available_quantity FROM vendor_catalog WHERE id=?",
-                                    (item["catalog_id"],)).fetchone()
-                if not stock or stock["available_quantity"] < item["quantity"]:
-                    return False, "Vendor stock changed; the order cannot be dispatched."
-            # Dispatch is the single point where pharmacy stock is added.
-            # Status changes to Dispatched in the same transaction, preventing
-            # repeated dispatch clicks from adding stock more than once.
-            for item in items:
-                conn.execute("UPDATE vendor_catalog SET available_quantity=available_quantity-?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                             (item["quantity"], item["catalog_id"]))
-
-                medicine = conn.execute(
-                    "SELECT id, quantity, expiry_date FROM medicines WHERE lower(name)=lower(?) ORDER BY id LIMIT 1",
-                    (item["medicine_name"],)
-                ).fetchone()
-                if medicine:
-                    medicine_id = medicine["id"]
-                    batch_count = conn.execute(
-                        "SELECT COUNT(*) FROM batches WHERE medicine_id=?", (medicine_id,)
-                    ).fetchone()[0]
-                    if batch_count == 0 and int(medicine["quantity"] or 0) > 0:
-                        old_expiry = (medicine["expiry_date"] or "").strip()
-                        try:
-                            datetime.strptime(old_expiry, "%Y-%m-%d")
-                        except (TypeError, ValueError):
-                            old_expiry = ""
-                        if old_expiry:
-                            conn.execute(
-                                """INSERT INTO batches(medicine_id,batch_number,quantity,cost_price,expiry_date)
-                                   VALUES (?,?,?,?,?)""",
-                                (medicine_id, f"LEGACY-DISPATCH-{order_id}", int(medicine["quantity"]), 0, old_expiry)
-                            )
-                else:
-                    medicine_id = conn.execute(
-                        """INSERT INTO medicines(name,quantity,price,expiry_date,min_stock)
-                           VALUES (?,0,?,?,10)""",
-                        (item["medicine_name"], float(item["unit_price"]), item["expiry_date"])
-                    ).lastrowid
-
                 conn.execute(
-                    """INSERT INTO batches(medicine_id,batch_number,quantity,cost_price,expiry_date)
-                       VALUES (?,?,?,?,?)""",
-                    (medicine_id, f"VENDOR-ORDER-{order_id}-ITEM-{item['id']}",
-                     int(item["quantity"]), float(item["unit_price"]), item["expiry_date"])
+                    """UPDATE vendor_order_items
+                       SET dispatch_batch_number=?, expiry_date=? WHERE id=?""",
+                    (batch, expiry, item["id"]),
                 )
-                db._sync_medicine_quantity(conn, medicine_id)
             new_status = "Dispatched"
         elif action == "receive" and actor_role == "pharmacist" and status in ("Dispatched", "Partially Received"):
             items = conn.execute("SELECT * FROM vendor_order_items WHERE order_id=?", (order_id,)).fetchall()
             if len(items) != 1:
                 return False, "This receipt screen supports one medicine per order."
             item = items[0]
+            if item["expiry_date"] < datetime.now().strftime("%Y-%m-%d"):
+                return False, "This batch is already expired and cannot be received into stock."
             outstanding = int(item["quantity"]) - int(item["received_quantity"])
             try:
                 qty = int(receive_quantity)
@@ -344,17 +351,32 @@ def transition_order(order_id, action, actor_role, actor_id, receive_quantity=No
                     VALUES (?,0,?, ?,10)""", (item["medicine_name"], item["unit_price"], item["expiry_date"]))
                 medicine_id = cur.lastrowid
 
+            dispatch_batch = (item["dispatch_batch_number"] or "").strip()
+            if not dispatch_batch:
+                return False, "This order has no vendor batch number; it cannot be received."
             new_received = int(item["received_quantity"]) + qty
-            batch_no = f"ORD-{order_id}-ITEM-{item['id']}-R{new_received}"
-            conn.execute("""INSERT INTO batches
-                (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date)
-                VALUES (?,?,?,?,?,?)""",
-                (medicine_id, purchase_id, batch_no, qty, item["unit_price"], item["expiry_date"]))
+            batch_no = dispatch_batch
+            existing = conn.execute(
+                """SELECT id FROM batches WHERE medicine_id=? AND batch_number=?""",
+                (medicine_id, batch_no),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE batches SET quantity=quantity+?, cost_price=? WHERE id=?",
+                    (qty, item["unit_price"], existing["id"]),
+                )
+            else:
+                conn.execute("""INSERT INTO batches
+                    (medicine_id,purchase_id,batch_number,quantity,cost_price,expiry_date)
+                    VALUES (?,?,?,?,?,?)""",
+                    (medicine_id, purchase_id, batch_no, qty, item["unit_price"], item["expiry_date"]))
             db._sync_medicine_quantity(conn, medicine_id)
             conn.execute("UPDATE vendor_order_items SET received_quantity=? WHERE id=?",
                          (new_received, item["id"]))
             new_status = "Received" if new_received >= int(item["quantity"]) else "Partially Received"
-        elif action == "reject" and actor_role == "vendor" and status == "Pending":
+        elif action == "reject" and actor_role == "vendor" and status in ("Pending", "Confirmed"):
+            if status == "Confirmed":
+                _restore_catalog_stock(conn, order_id)
             new_status = "Rejected"
         elif action == "cancel" and actor_role == "pharmacist" and status == "Pending":
             new_status = "Cancelled"

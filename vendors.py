@@ -204,7 +204,13 @@ class VendorsFrame(tk.Frame):
             messagebox.showinfo("Supplier Catalogue",
                 "This vendor has no registered vendor portal/catalogue account yet.", parent=self)
             return
-        CatalogueWindow(self.winfo_toplevel(), vendor["name"], row["id"], self._user_id)
+        CatalogueWindow(
+            self.winfo_toplevel(),
+            vendor["name"],
+            row["id"],
+            self._user_id,
+            pharmacist_username=self._username,
+        )
 
     def _open_add(self):
         VendorDialog(self.winfo_toplevel(), "Add Vendor", self._handle_add)
@@ -255,13 +261,14 @@ class VendorsFrame(tk.Frame):
 
 class CatalogueWindow(tk.Toplevel):
     """Catalogue for the vendor selected in the existing Vendor Management screen."""
-    def __init__(self, parent, vendor_name, vendor_id, pharmacist_user_id):
+    def __init__(self, parent, vendor_name, vendor_id, pharmacist_user_id, pharmacist_username=None):
         super().__init__(parent)
         self.title(f"Supplier Catalogue – {vendor_name}")
         self.geometry("850x470")
         self.transient(parent)
         self.vendor_id = vendor_id
         self.pharmacist_user_id = pharmacist_user_id
+        self.pharmacist_username = pharmacist_username
         self.vendor_name = vendor_name
         self.configure(bg=st.COLORS["background"])
         tk.Label(self, text=f"Available medicines – {vendor_name}",
@@ -316,7 +323,16 @@ class CatalogueWindow(tk.Toplevel):
         ok, result=vs.create_order(self.pharmacist_user_id, self.vendor_id, item_id, qty)
         if not ok:
             messagebox.showerror("Request failed", str(result), parent=self); return
-        messagebox.showinfo("Request placed", f"Purchase request #{result} sent to {self.vendor_name}.", parent=self)
+        if self.pharmacist_username:
+            user = db.get_user_by_username(self.pharmacist_username)
+            if user and user["email"]:
+                vs.send_order_receipt(result, user["email"])
+        messagebox.showinfo(
+            "Request placed",
+            f"Purchase request #{result} sent to {self.vendor_name}."
+            + (" An email receipt will be sent if SMTP is configured." if self.pharmacist_username else ""),
+            parent=self,
+        )
         self.refresh()
 
 
@@ -368,7 +384,7 @@ class VendorDialog(tk.Toplevel):
         st.add_hover(sb, st.COLORS["primary"], st.COLORS["primary_dark"])
         body = tk.Frame(self, bg=st.COLORS["white"])
         body.pack(side="top", fill="both", expand=True, pady=(8, 0))
-        self._name = self._field(body, "Vendor / Company Name *")
+        self._name_var = self._field(body, "Vendor / Company Name *")
         self._contact = self._field(body, "Contact Person")
         self._phone = self._field(body, "Phone")
         self._email = self._field(body, "Email")
@@ -380,14 +396,14 @@ class VendorDialog(tk.Toplevel):
         ).pack(padx=30, pady=(0, 6))
 
     def _populate(self, v):
-        self._name.set(v["name"] or "")
+        self._name_var.set(v["name"] or "")
         self._contact.set(v["contact_person"] or "")
         self._phone.set(v["phone"] or "")
         self._email.set(v["email"] or "")
         self._address.set(v["address"] or "")
 
     def _save(self):
-        name = self._name.get().strip()
+        name = self._name_var.get().strip()
         if not name:
             self._msg.set("Vendor name is required.")
             return
