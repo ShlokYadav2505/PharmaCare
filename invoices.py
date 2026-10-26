@@ -1,7 +1,4 @@
-"""Invoice history, detail views, and printing for PharmaCare."""
-import os
-import tempfile
-import textwrap
+"""Invoice history and detail views for PharmaCare."""
 import tkinter as tk
 from html import escape
 from tkinter import messagebox, ttk
@@ -94,7 +91,7 @@ def _invoice_lines(invoice, kind):
     lines.append(f"GRAND TOTAL: {_money(total)}")
     if purchase:
         lines.append(f"Payment method: {invoice.get('payment_method') or '—'}")
-    lines.append(f"Payment status: {invoice.get('payment_status') or '—'}")
+        lines.append(f"Payment status: {invoice.get('payment_status') or '—'}")
     if purchase and invoice.get("notes"):
         lines.extend(["", f"Notes: {invoice['notes']}"])
     return lines
@@ -129,75 +126,8 @@ def invoice_email_html(invoice):
         f"Discount: {_money(invoice.get('discount_amount'))}<br>"
         f"CGST: {_money(invoice.get('cgst_amount'))}<br>"
         f"SGST: {_money(invoice.get('sgst_amount'))}<br>"
-        f"<b>Grand Total: {_money(invoice.get('grand_total'))}</b><br>"
-        f"Payment status: {escape(invoice.get('payment_status') or '—')}</p>"
+        f"<b>Grand Total: {_money(invoice.get('grand_total'))}</b></p>"
     )
-
-
-def _pdf_safe(text):
-    text = str(text).replace("₹", "INR ").replace("—", "-").replace("–", "-")
-    return text.encode("latin-1", "replace").decode("latin-1")
-
-
-def _pdf_escape(text):
-    return _pdf_safe(text).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
-def _write_print_document(invoice, path, kind):
-    """Create the temporary print document used by the Print action."""
-    wrapped = []
-    for line in _invoice_lines(invoice, kind):
-        wrapped.extend(textwrap.wrap(_pdf_safe(line), width=92) or [""])
-    page_lines = [wrapped[i:i + 52] for i in range(0, len(wrapped), 52)] or [[]]
-
-    objects = {
-        1: b"<< /Type /Catalog /Pages 2 0 R >>",
-        3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    }
-    page_refs = []
-    for index, lines in enumerate(page_lines):
-        page_id = 4 + index * 2
-        content_id = page_id + 1
-        page_refs.append(f"{page_id} 0 R")
-        commands = []
-        y = 800
-        for line in lines:
-            commands.append(
-                f"BT /F1 9 Tf 42 {y} Td ({_pdf_escape(line)}) Tj ET"
-            )
-            y -= 14
-        stream = "\n".join(commands).encode("latin-1")
-        objects[page_id] = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
-        ).encode("ascii")
-        objects[content_id] = (
-            f"<< /Length {len(stream)} >>\nstream\n".encode("ascii")
-            + stream + b"\nendstream"
-        )
-    objects[2] = (
-        f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_refs)} >>"
-    ).encode("ascii")
-
-    output = bytearray(b"%PDF-1.4\n%PharmaCare\n")
-    offsets = [0] * (max(objects) + 1)
-    for object_id in sorted(objects):
-        offsets[object_id] = len(output)
-        output.extend(f"{object_id} 0 obj\n".encode("ascii"))
-        output.extend(objects[object_id])
-        output.extend(b"\nendobj\n")
-    xref_offset = len(output)
-    output.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
-    output.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        output.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
-    output.extend(
-        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
-        f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
-    )
-    with open(path, "wb") as pdf:
-        pdf.write(output)
-    return path
 
 
 class InvoiceDetailWindow(tk.Toplevel):
@@ -266,8 +196,7 @@ class InvoiceDetailWindow(tk.Toplevel):
         payment_summary = (
             f"Payment: {self.invoice.get('payment_method') or '—'} / "
             f"{self.invoice.get('payment_status') or '—'}"
-            if self.kind == "purchase"
-            else f"Payment status: {self.invoice.get('payment_status') or '—'}"
+            if self.kind == "purchase" else ""
         )
         summary_parts = [
             f"Subtotal: {_money(self.invoice.get('subtotal'))}",
@@ -279,7 +208,8 @@ class InvoiceDetailWindow(tk.Toplevel):
             summary_parts.append(f"IGST: {_money(self.invoice.get('igst_amount'))}")
         summary = (
             "    ".join(summary_parts) + "\n"
-            f"Grand Total: {_money(total)}    {payment_summary}"
+            f"Grand Total: {_money(total)}"
+            + (f"    {payment_summary}" if payment_summary else "")
         )
         tk.Label(self, text=summary, font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_dark"],
@@ -288,23 +218,8 @@ class InvoiceDetailWindow(tk.Toplevel):
 
         actions = tk.Frame(self, bg=st.COLORS["background"])
         actions.pack(fill="x", padx=18, pady=(0, 14))
-        tk.Button(actions, text="Print", command=self._print,
-                  **st.BUTTON["primary"]).pack(side="left")
         tk.Button(actions, text="Close", command=self.destroy,
                   **st.BUTTON["secondary"]).pack(side="right")
-
-    def _print(self):
-        path = None
-        try:
-            fd, path = tempfile.mkstemp(prefix="pharmacare_invoice_", suffix=".pdf")
-            os.close(fd)
-            _write_print_document(self.invoice, path, self.kind)
-            if os.name == "nt":
-                os.startfile(path, "print")
-            else:
-                raise OSError("Printing invoices is supported from the Windows app.")
-        except OSError as exc:
-            messagebox.showerror("Print failed", str(exc), parent=self)
 
 
 class InvoiceHistoryWindow(tk.Toplevel):
@@ -324,13 +239,18 @@ class InvoiceHistoryWindow(tk.Toplevel):
         ).pack(anchor="w", padx=18, pady=14)
         frame = tk.Frame(self, bg=st.COLORS["white"])
         frame.pack(fill="both", expand=True, padx=18, pady=(0, 10))
-        self.tree = ttk.Treeview(frame, columns=("number", "date", "party", "total", "status"),
+        columns = ("number", "date", "party", "total", "status") if kind == "purchase" else (
+            "number", "date", "party", "total"
+        )
+        self.tree = ttk.Treeview(frame, columns=columns,
                                  show="headings", selectmode="browse")
-        for key, label, width in (
+        invoice_columns = [
             ("number", "Invoice ID", 230), ("date", "Date", 125),
             ("party", "Vendor / Customer", 200), ("total", "Grand Total", 130),
-            ("status", "Payment Status", 130),
-        ):
+        ]
+        if kind == "purchase":
+            invoice_columns.append(("status", "Payment Status", 130))
+        for key, label, width in invoice_columns:
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, anchor="w" if key in ("number", "party") else "center")
         self.tree.pack(side="left", fill="both", expand=True)
@@ -357,7 +277,7 @@ class InvoiceHistoryWindow(tk.Toplevel):
             self.tree.insert("", "end", iid=str(key), values=(
                 row["invoice_number"],
                 row["purchase_date"] if self.kind == "purchase" else row["invoice_date"],
-                party, _money(total), row["payment_status"]
+                party, _money(total), *([row["payment_status"]] if self.kind == "purchase" else [])
             ))
 
     def _view(self):

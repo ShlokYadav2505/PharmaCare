@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox
 from datetime import date
 import database as db
 import vendor_system as vs
+from inventory import COMMON_MEDICINES
 
 
 class VendorPortalFrame(tk.Frame):
@@ -72,21 +73,33 @@ class VendorPortalFrame(tk.Frame):
         form = tk.LabelFrame(self.body, text="Add medicine to wholesale catalogue", bg="#F4F7F4", padx=10, pady=8)
         form.pack(fill="x", pady=(8, 4))
         self.v_name = tk.StringVar()
+        self._suggest_popup = None
+        self._suggest_list = None
+        self._suggestions = []
         self.v_unit = tk.StringVar(value="pack")
         self.v_price = tk.StringVar()
         self.v_qty = tk.StringVar()
         self.v_mfg = tk.StringVar(value=date.today().isoformat())
-        self.v_expiry = tk.StringVar(value=date.today().replace(year=date.today().year + 1).isoformat())
+        self.v_expiry = tk.StringVar(value=vs.expiry_one_year_after(self.v_mfg.get()))
+        self.v_mfg.trace_add("write", lambda *_: self._update_expiry_preview())
         self.v_gst = tk.StringVar(value="0")
         fields = [("Medicine", self.v_name, 22), ("Unit", self.v_unit, 10),
                   ("Wholesale price ₹", self.v_price, 14), ("Available quantity", self.v_qty, 14),
                   ("Mfg YYYY-MM-DD", self.v_mfg, 14),
-                  ("Expiry YYYY-MM-DD", self.v_expiry, 14), ("GST %", self.v_gst, 7)]
+                  ("Expiry (auto +1 year)", self.v_expiry, 14), ("GST %", self.v_gst, 7)]
         for i, (label, var, width) in enumerate(fields):
             cell = tk.Frame(form, bg="#F4F7F4")
             cell.grid(row=0, column=i, padx=4, sticky="ew")
             tk.Label(cell, text=label, bg="#F4F7F4").pack(anchor="w")
-            tk.Entry(cell, textvariable=var, width=width).pack(fill="x")
+            entry = tk.Entry(cell, textvariable=var, width=width,
+                             state="readonly" if var is self.v_expiry else "normal")
+            entry.pack(fill="x")
+            if var is self.v_name:
+                self._name_entry = entry
+                self.v_name.trace_add("write", lambda *_: self._update_name_suggestions())
+                entry.bind("<Down>", self._suggest_down)
+                entry.bind("<Escape>", lambda _event: self._close_name_suggestions())
+                entry.bind("<FocusOut>", lambda _event: self.after(120, self._close_name_suggestions))
             form.columnconfigure(i, weight=1)
         tk.Button(form, text="Add to catalogue", command=self._add_catalog, bg="#2E7D32",
                   fg="white", padx=12).grid(row=0, column=len(fields), padx=8, pady=16)
@@ -135,8 +148,8 @@ class VendorPortalFrame(tk.Frame):
     def _add_catalog(self):
         ok, msg = vs.add_catalog_item(
             self.vendor["id"], self.v_name.get(), self.v_unit.get(),
-            self.v_price.get(), self.v_qty.get(), self.v_expiry.get(),
-            manufacture_date=self.v_mfg.get(), gst_rate=self.v_gst.get()
+            self.v_price.get(), self.v_qty.get(), self.v_mfg.get(),
+            gst_rate=self.v_gst.get()
         )
         if not ok:
             messagebox.showerror("Catalogue", msg, parent=self)
@@ -145,6 +158,102 @@ class VendorPortalFrame(tk.Frame):
             var.set("")
         self.refresh()
         messagebox.showinfo("Catalogue", msg, parent=self)
+
+    def _update_expiry_preview(self):
+        try:
+            self.v_expiry.set(vs.expiry_one_year_after(self.v_mfg.get().strip()))
+        except (TypeError, ValueError):
+            self.v_expiry.set("")
+
+    def _update_name_suggestions(self):
+        query = self.v_name.get().strip().casefold()
+        if not query:
+            self._close_name_suggestions()
+            return
+        names = set(COMMON_MEDICINES)
+        try:
+            names.update(str(row["name"]).strip() for row in db.get_all_medicines()
+                         if str(row["name"]).strip())
+            names.update(str(row["medicine_name"]).strip()
+                         for row in vs.get_catalog(self.vendor["id"])
+                         if str(row["medicine_name"]).strip())
+        except Exception:
+            pass
+        prefix = sorted((name for name in names if name.casefold().startswith(query)),
+                        key=str.casefold)
+        partial = sorted((name for name in names
+                          if query in name.casefold() and not name.casefold().startswith(query)),
+                         key=str.casefold)
+        self._suggestions = (prefix + partial)[:8]
+        if not self._suggestions:
+            self._close_name_suggestions()
+            return
+        if self._suggest_popup is None or not self._suggest_popup.winfo_exists():
+            self._suggest_popup = tk.Toplevel(self)
+            self._suggest_popup.overrideredirect(True)
+            self._suggest_popup.configure(bg="white")
+            self._suggest_list = tk.Listbox(
+                self._suggest_popup, height=min(8, len(self._suggestions)),
+                font=("Segoe UI", 10), bg="white", fg="#202124",
+                selectbackground="#C8E6C9", selectforeground="#202124",
+                activestyle="none", relief="solid", bd=1, highlightthickness=0,
+            )
+            self._suggest_list.pack(fill="both", expand=True)
+            self._suggest_list.bind("<ButtonRelease-1>", self._choose_name_suggestion)
+            self._suggest_list.bind("<Return>", self._choose_name_suggestion)
+            self._suggest_list.bind("<Escape>", lambda _event: self._close_name_suggestions())
+            self._suggest_list.bind("<Up>", self._suggest_up)
+            self._suggest_list.bind("<Down>", self._suggest_down)
+        self._suggest_list.delete(0, "end")
+        for name in self._suggestions:
+            self._suggest_list.insert("end", name)
+        self._suggest_list.configure(height=min(8, len(self._suggestions)))
+        self._suggest_popup.update_idletasks()
+        x, entry_y = self._name_entry.winfo_rootx(), self._name_entry.winfo_rooty()
+        height = min(8, len(self._suggestions)) * 24 + 4
+        y = entry_y + self._name_entry.winfo_height()
+        if y + height > self.winfo_screenheight():
+            y = max(0, entry_y - height)
+        self._suggest_popup.geometry(
+            f"{max(self._name_entry.winfo_width(), 260)}x{height}+{x}+{y}"
+        )
+        self._suggest_popup.lift()
+
+    def _choose_name_suggestion(self, _event=None):
+        if self._suggest_list is not None:
+            selected = self._suggest_list.curselection()
+            if selected:
+                self.v_name.set(self._suggest_list.get(selected[0]))
+                self._close_name_suggestions()
+                self._name_entry.focus_set()
+                self._name_entry.icursor("end")
+        return "break"
+
+    def _suggest_down(self, _event=None):
+        if self._suggest_list is not None and self._suggest_list.size():
+            self._suggest_list.focus_set()
+            self._suggest_list.selection_clear(0, "end")
+            self._suggest_list.selection_set(0)
+            self._suggest_list.activate(0)
+        return "break"
+
+    def _suggest_up(self, _event=None):
+        if self._suggest_list is not None and self._suggest_list.size():
+            last = self._suggest_list.size() - 1
+            self._suggest_list.selection_clear(0, "end")
+            self._suggest_list.selection_set(last)
+            self._suggest_list.activate(last)
+        return "break"
+
+    def _close_name_suggestions(self):
+        if self._suggest_popup is not None:
+            try:
+                if self._suggest_popup.winfo_exists():
+                    self._suggest_popup.destroy()
+            except tk.TclError:
+                pass
+        self._suggest_popup = None
+        self._suggest_list = None
 
     def _selected_id(self, tree):
         selection = tree.selection()

@@ -1023,8 +1023,8 @@ def _insert_transaction(conn, bill_number, medicine_id, medicine_name,
 
 
 def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None,
-                gst_rate=0.0, gst_mode="local", payment_method="Cash",
-                payment_status="Paid", customer_name="Walk-in Customer",
+                gst_rate=0.0, gst_mode="local", payment_method="",
+                payment_status="", customer_name="Walk-in Customer",
                 customer_address="", pharmacy_name="PharmaCare",
                 pharmacist_name="", pharmacist_email=""):
     """Save a sales invoice and its FEFO-linked transaction lines atomically."""
@@ -1218,7 +1218,7 @@ def get_sales_invoices(limit=500):
     try:
         return conn.execute(
             """SELECT invoice_number, invoice_date, customer_name, customer_email,
-                      grand_total, payment_status
+                      grand_total
                FROM sales_invoices
                ORDER BY invoice_date DESC, created_at DESC LIMIT ?""",
             (limit,)

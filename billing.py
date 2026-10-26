@@ -167,18 +167,6 @@ class BillingFrame(tk.Frame):
         tk.Label(gst_row, text="12%", font=st.FONTS["body_bold"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_dark"]).pack(side="right")
 
-        def option_row(label, var, values):
-            row = tk.Frame(body, bg=st.COLORS["white"])
-            row.pack(fill="x", pady=3)
-            tk.Label(row, text=label, font=st.FONTS["small"],
-                     bg=st.COLORS["white"], fg=st.COLORS["text_medium"]).pack(side="left")
-            ttk.Combobox(row, textvariable=var, state="readonly", values=values,
-                         width=16).pack(side="right")
-
-        self._payment_status_var = tk.StringVar(value="Paid")
-        option_row("Payment Status", self._payment_status_var,
-                   ("Paid", "Pending", "Partially Paid"))
-
         self._count_var = tk.StringVar(value="0 item(s)")
         tk.Label(body, textvariable=self._count_var, font=st.FONTS["small"],
                  bg=st.COLORS["white"], fg=st.COLORS["text_light"]).pack(anchor="e", pady=(4,0))
@@ -318,15 +306,13 @@ class BillingFrame(tk.Frame):
             f"Invoice: {bill_no}\nCustomer: {customer_name}\nReceipt email: {cust}\n"
             f"Items: {len(self._items)}\nSubtotal: ₹{sub:.2f}\n"
             f"Discount: ₹{disc:.2f}\nGST: ₹{tax['gst_amount']:.2f}\n"
-            f"Grand Total: ₹{total:.2f}\nPayment Status: {self._payment_status_var.get()}\n\nGenerate?",
+            f"Grand Total: ₹{total:.2f}\n\nGenerate?",
             parent=self.winfo_toplevel()): return
 
         ok, result = db.record_bill(
             bill_no, cust, self._items, discount=disc, user_id=self._user_id,
             gst_rate=gst_rate,
             gst_mode="local",
-            payment_method="",
-            payment_status=self._payment_status_var.get(),
             customer_name=customer_name,
             pharmacist_name=self._pharmacist_name,
             pharmacist_email=self._user_email,

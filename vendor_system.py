@@ -134,23 +134,34 @@ def get_user_id(username):
     return row["id"] if row else None
 
 
-def add_catalog_item(vendor_id, name, unit, price, quantity, expiry_date,
-                     manufacture_date="", gst_rate=0):
+def expiry_one_year_after(manufacture_date):
+    """Return the one-year shelf-life date, handling leap-day manufacture dates."""
+    mfg_date = datetime.strptime(manufacture_date, "%Y-%m-%d").date()
+    try:
+        expiry = mfg_date.replace(year=mfg_date.year + 1)
+    except ValueError:
+        expiry = mfg_date.replace(year=mfg_date.year + 1, day=28)
+    return expiry.isoformat()
+
+
+def add_catalog_item(vendor_id, name, unit, price, quantity,
+                     manufacture_date, gst_rate=0):
     name = name.strip()
     try:
-        exp_date = datetime.strptime(expiry_date, "%Y-%m-%d").date()
         mfg_raw = (manufacture_date or "").strip()
-        mfg_date = datetime.strptime(mfg_raw, "%Y-%m-%d").date() if mfg_raw else None
+        mfg_date = datetime.strptime(mfg_raw, "%Y-%m-%d").date()
+        expiry_date = expiry_one_year_after(mfg_raw)
+        exp_date = datetime.strptime(expiry_date, "%Y-%m-%d").date()
         price, quantity = float(price), int(quantity)
         gst_rate = float(gst_rate)
         if not name or price < 0 or quantity < 0 or not 0 <= gst_rate <= 100:
             return False, "Enter a medicine name and valid price, quantity, and GST rate (0–100%)."
     except (ValueError, TypeError):
-        return False, "Use valid price, quantity, GST, manufacture, and expiry values."
-    if mfg_date and mfg_date > exp_date:
-        return False, "Manufacture date cannot be after expiry date."
+        return False, "Use valid price, quantity, GST, and manufacture date values."
+    if mfg_date > datetime.now().date():
+        return False, "Manufacture date cannot be in the future."
     if exp_date < datetime.now().date():
-        return False, "Expiry date must be today or later."
+        return False, "The calculated expiry date has passed."
     conn = _conn()
     try:
         conn.execute("""INSERT INTO vendor_catalog
@@ -162,7 +173,7 @@ def add_catalog_item(vendor_id, name, unit, price, quantity, expiry_date,
         conn.commit()
         return True, "Medicine added to vendor catalogue."
     except sqlite3.IntegrityError:
-        return False, "This medicine and expiry date already exist in your catalogue."
+        return False, "This medicine and manufacturing date already exist in your catalogue."
     finally:
         conn.close()
 
