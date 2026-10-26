@@ -82,17 +82,20 @@ class VendorPortalFrame(tk.Frame):
         self.v_mfg = tk.StringVar(value=date.today().isoformat())
         self.v_expiry = tk.StringVar(value=vs.expiry_one_year_after(self.v_mfg.get()))
         self.v_mfg.trace_add("write", lambda *_: self._update_expiry_preview())
-        self.v_gst = tk.StringVar(value="0")
-        fields = [("Medicine", self.v_name, 22), ("Unit", self.v_unit, 10),
-                  ("Wholesale price ₹", self.v_price, 14), ("Available quantity", self.v_qty, 14),
-                  ("Mfg YYYY-MM-DD", self.v_mfg, 14),
-                  ("Expiry (auto +1 year)", self.v_expiry, 14), ("GST %", self.v_gst, 7)]
-        for i, (label, var, width) in enumerate(fields):
+        fields = [
+            ("Medicine name", self.v_name, 22, 0, 0, False),
+            ("Unit", self.v_unit, 10, 0, 1, False),
+            ("Manufactured (YYYY-MM-DD)", self.v_mfg, 14, 0, 2, False),
+            ("Wholesale price ₹", self.v_price, 14, 1, 0, False),
+            ("Available quantity", self.v_qty, 14, 1, 1, False),
+            ("Expiry (auto +1 year)", self.v_expiry, 14, 1, 2, True),
+        ]
+        for label, var, width, row, column, readonly in fields:
             cell = tk.Frame(form, bg="#F4F7F4")
-            cell.grid(row=0, column=i, padx=4, sticky="ew")
+            cell.grid(row=row, column=column, padx=4, pady=4, sticky="ew")
             tk.Label(cell, text=label, bg="#F4F7F4").pack(anchor="w")
             entry = tk.Entry(cell, textvariable=var, width=width,
-                             state="readonly" if var is self.v_expiry else "normal")
+                             state="readonly" if readonly else "normal")
             entry.pack(fill="x")
             if var is self.v_name:
                 self._name_entry = entry
@@ -100,14 +103,14 @@ class VendorPortalFrame(tk.Frame):
                 entry.bind("<Down>", self._suggest_down)
                 entry.bind("<Escape>", lambda _event: self._close_name_suggestions())
                 entry.bind("<FocusOut>", lambda _event: self.after(120, self._close_name_suggestions))
-            form.columnconfigure(i, weight=1)
+            form.columnconfigure(column, weight=1)
         tk.Button(form, text="Add to catalogue", command=self._add_catalog, bg="#2E7D32",
-                  fg="white", padx=12).grid(row=0, column=len(fields), padx=8, pady=16)
+                  fg="white", padx=12).grid(row=2, column=2, padx=4, pady=(8, 2), sticky="e")
         tk.Label(self.body, text="Your catalogue", bg="#F4F7F4",
                  font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.catalog_tree = self._table(self.body, [("name","Medicine",220),("unit","Unit",90),
             ("price","Wholesale ₹",120),("qty","Available",100),("mfg","Mfg",120),
-            ("expiry","Expiry",130),("gst","GST %",80)], 6)
+            ("expiry","Expiry",130)], 6)
         tk.Label(self.body, text="Orders", bg="#F4F7F4", font=("Segoe UI", 11, "bold")).pack(anchor="w")
         self.orders_tree = self._table(self.body, [("id","Order #",80),("pharmacist","Pharmacist",150),
             ("total","Total ₹",120),("status","Status",150),("date","Placed",160)], 5)
@@ -128,8 +131,7 @@ class VendorPortalFrame(tk.Frame):
                  font=("Segoe UI", 14, "bold")).pack(anchor="w")
         self.catalog_tree = self._table(self.body, [("id","Item ID",70),("vendor","Vendor",180),
             ("name","Medicine",220),("unit","Unit",80),("price","Wholesale ₹",120),
-            ("qty","Available",90),("mfg","Mfg",120),("expiry","Expiry",120),
-            ("gst","GST %",80)], 12)
+            ("qty","Available",90),("mfg","Mfg",120),("expiry","Expiry",120)], 12)
         form = tk.Frame(self.body, bg="#F4F7F4")
         form.pack(fill="x", pady=8)
         tk.Label(form, text="Order quantity:", bg="#F4F7F4").pack(side="left")
@@ -148,8 +150,7 @@ class VendorPortalFrame(tk.Frame):
     def _add_catalog(self):
         ok, msg = vs.add_catalog_item(
             self.vendor["id"], self.v_name.get(), self.v_unit.get(),
-            self.v_price.get(), self.v_qty.get(), self.v_mfg.get(),
-            gst_rate=self.v_gst.get()
+            self.v_price.get(), self.v_qty.get(), self.v_mfg.get()
         )
         if not ok:
             messagebox.showerror("Catalogue", msg, parent=self)
@@ -307,8 +308,7 @@ class VendorPortalFrame(tk.Frame):
             for row in vs.get_catalog(self.vendor["id"]):
                 self.catalog_tree.insert("", "end", iid=str(row["id"]), values=(row["medicine_name"], row["unit"],
                     f"{row['wholesale_price']:.2f}", row["available_quantity"],
-                    row["manufacture_date"] or "—", row["expiry_date"],
-                    f"{float(row['gst_rate'] or 0):g}%"))
+                    row["manufacture_date"] or "—", row["expiry_date"]))
             orders = vs.list_orders(vendor_id=self.vendor["id"], role="vendor")
             for row in orders:
                 self.orders_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["pharmacist_name"],
@@ -318,7 +318,7 @@ class VendorPortalFrame(tk.Frame):
                 self.catalog_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["business_name"],
                     row["medicine_name"], row["unit"], f"{row['wholesale_price']:.2f}",
                     row["available_quantity"], row["manufacture_date"] or "—",
-                    row["expiry_date"], f"{float(row['gst_rate'] or 0):g}%"))
+                    row["expiry_date"]))
             orders = vs.list_orders(user_id=self.user_id)
             for row in orders:
                 self.orders_tree.insert("", "end", iid=str(row["id"]), values=(row["id"], row["business_name"],

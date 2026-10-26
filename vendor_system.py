@@ -145,7 +145,7 @@ def expiry_one_year_after(manufacture_date):
 
 
 def add_catalog_item(vendor_id, name, unit, price, quantity,
-                     manufacture_date, gst_rate=0):
+                     manufacture_date):
     name = name.strip()
     try:
         mfg_raw = (manufacture_date or "").strip()
@@ -153,11 +153,10 @@ def add_catalog_item(vendor_id, name, unit, price, quantity,
         expiry_date = expiry_one_year_after(mfg_raw)
         exp_date = datetime.strptime(expiry_date, "%Y-%m-%d").date()
         price, quantity = float(price), int(quantity)
-        gst_rate = float(gst_rate)
-        if not name or price < 0 or quantity < 0 or not 0 <= gst_rate <= 100:
-            return False, "Enter a medicine name and valid price, quantity, and GST rate (0–100%)."
+        if not name or price < 0 or quantity < 0:
+            return False, "Enter a medicine name and valid price and quantity."
     except (ValueError, TypeError):
-        return False, "Use valid price, quantity, GST, and manufacture date values."
+        return False, "Use valid price, quantity, and manufacture date values."
     if mfg_date > datetime.now().date():
         return False, "Manufacture date cannot be in the future."
     if exp_date < datetime.now().date():
@@ -167,9 +166,9 @@ def add_catalog_item(vendor_id, name, unit, price, quantity,
         conn.execute("""INSERT INTO vendor_catalog
             (vendor_id,medicine_name,unit,wholesale_price,available_quantity,
              manufacture_date,expiry_date,gst_rate)
-            VALUES (?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,0)""",
             (vendor_id, name, unit.strip() or "pack", price, quantity,
-             mfg_raw or None, expiry_date, gst_rate))
+             mfg_raw or None, expiry_date))
         conn.commit()
         return True, "Medicine added to vendor catalogue."
     except sqlite3.IntegrityError:
@@ -218,7 +217,7 @@ def create_order(pharmacist_user_id, vendor_id, catalog_id, quantity):
             VALUES (?,?,?,?,?,?,?,?)""",
             (order_id, catalog_id, item["medicine_name"], quantity,
              item["wholesale_price"], item["manufacture_date"],
-             item["gst_rate"], item["expiry_date"]))
+             0, item["expiry_date"]))
         conn.commit()
         return True, order_id
     except Exception as exc:
