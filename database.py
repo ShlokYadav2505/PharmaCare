@@ -8,18 +8,56 @@ import secrets
 from datetime import datetime, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pharmacy.db")
+PASSWORD_HASH_ITERATIONS = 600_000
+PASSWORD_HASH_PREFIX = "pbkdf2_sha256"
+SALES_GST_RATE = 12.0
 
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    print("DATABASE USED:", DB_PATH)
     return conn
 
 
 def hash_password(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PASSWORD_HASH_ITERATIONS
+    )
+    return f"{PASSWORD_HASH_PREFIX}${PASSWORD_HASH_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def verify_password(stored_hash, password):
+    """Verify PBKDF2 hashes and legacy unsalted SHA-256 hashes."""
+    if not stored_hash:
+        return False
+    if stored_hash.startswith(f"{PASSWORD_HASH_PREFIX}$"):
+        try:
+            prefix, iterations_text, salt_hex, digest_hex = stored_hash.split("$", 3)
+            iterations = int(iterations_text)
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(digest_hex)
+            if prefix != PASSWORD_HASH_PREFIX or not 100_000 <= iterations <= 2_000_000:
+                return False
+        except (TypeError, ValueError):
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return secrets.compare_digest(actual, expected)
+
+    # Existing accounts used SHA-256 hex digests. Accept them only so a valid
+    # login can transparently replace the old hash with a salted PBKDF2 hash.
+    if len(stored_hash) == 64:
+        try:
+            int(stored_hash, 16)
+        except ValueError:
+            return False
+        legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        return secrets.compare_digest(stored_hash, legacy)
+    return False
+
+
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_hex(32))
 
 
 def initialize_database():
@@ -260,9 +298,23 @@ def validate_login(email, password):
     """Authenticate an account using its email address and password."""
     user = get_user_by_email(email)
     if not user:
-        return False, "Email address not found.", None
-    if user["password"] != hash_password(password):
-        return False, "Incorrect password.", None
+        verify_password(_DUMMY_PASSWORD_HASH, password)
+        return False, "Invalid email or password.", None
+    if not verify_password(user["password"], password):
+        if not user["password"].startswith(f"{PASSWORD_HASH_PREFIX}$"):
+            verify_password(_DUMMY_PASSWORD_HASH, password)
+        return False, "Invalid email or password.", None
+    if not user["password"].startswith(f"{PASSWORD_HASH_PREFIX}$"):
+        upgraded_hash = hash_password(password)
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE users SET password=? WHERE id=? AND password=?",
+                (upgraded_hash, user["id"], user["password"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
     # Keep returning the username because the dashboard currently displays it.
     return True, "Login successful.", user["username"]
 
@@ -1023,17 +1075,14 @@ def _insert_transaction(conn, bill_number, medicine_id, medicine_name,
 
 
 def record_bill(bill_number, customer_email, items, discount=0.0, user_id=None,
-                gst_rate=0.0, gst_mode="local", payment_method="",
-                payment_status="", customer_name="Walk-in Customer",
+                payment_method="", payment_status="", customer_name="Walk-in Customer",
                 customer_address="", pharmacy_name="PharmaCare",
                 pharmacist_name="", pharmacist_email=""):
     """Save a sales invoice and its FEFO-linked transaction lines atomically."""
     conn = get_connection()
     try:
-        # Customer sales use a fixed 12% local GST rate. Keep the parameters
-        # for compatibility with existing callers, but don't allow them to
-        # change the amount recorded on a sales invoice.
-        gst_rate = 12.0
+        # Sales use the application's fixed local GST rate.
+        gst_rate = SALES_GST_RATE
         gst_mode = "local"
         if not bill_number:
             bill_number = _generate_invoice_id(conn, "SALE")

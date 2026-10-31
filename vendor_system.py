@@ -100,24 +100,41 @@ def initialize_vendor_system():
 
 def get_user_role(username):
     conn = _conn()
-    row = conn.execute("SELECT role FROM users WHERE username=?", (username.strip(),)).fetchone()
-    conn.close()
-    return row["role"] if row and "role" in row.keys() else "pharmacist"
+    try:
+        row = conn.execute(
+            "SELECT role FROM users WHERE username=?", (username.strip(),)
+        ).fetchone()
+        return row["role"] if row and "role" in row.keys() else None
+    finally:
+        conn.close()
 
 
 def register_vendor_account(user_id, business_name, contact_person="", phone="", address=""):
+    business_name = (business_name or "").strip()
+    if not business_name:
+        return False, "Vendor business name is required."
     conn = _conn()
     try:
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET role='vendor' WHERE id=?", (user_id,))
-        cur.execute("""INSERT INTO vendor_accounts
+        conn.execute("BEGIN IMMEDIATE")
+        updated = conn.execute(
+            "UPDATE users SET role='vendor' WHERE id=? AND role='pharmacist'",
+            (user_id,),
+        )
+        if updated.rowcount != 1:
+            conn.rollback()
+            return False, "Only an existing pharmacist account can be registered as a vendor."
+        conn.execute("""INSERT INTO vendor_accounts
             (user_id,business_name,contact_person,phone,address) VALUES (?,?,?,?,?)""",
-            (user_id, business_name.strip(), contact_person.strip(), phone.strip(), address.strip()))
+            (user_id, business_name, (contact_person or "").strip(),
+             (phone or "").strip(), (address or "").strip()))
         conn.commit()
         return True, "Vendor account created."
-    except sqlite3.IntegrityError as exc:
+    except sqlite3.IntegrityError:
         conn.rollback()
         return False, "Vendor account already exists or details are invalid."
+    except Exception:
+        conn.rollback()
+        return False, "Vendor account could not be created."
     finally:
         conn.close()
 

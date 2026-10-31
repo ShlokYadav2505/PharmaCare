@@ -2,6 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import tkinter as tk
+from tkinter import messagebox
 import database as db
 import vendor_system as vendor_db
 from login import LoginFrame
@@ -42,17 +43,24 @@ class PharmaCareApp:
         self._clear()
         self._root.resizable(True, True)
         self._center(1300, 780)
-        if vendor_db.get_user_role(username) == "vendor":
+        role = vendor_db.get_user_role(username)
+        if role == "vendor":
             from vendor_portal import VendorPortalFrame
             self._frame = VendorPortalFrame(self._root, username, self._show_login)
-        else:
+        elif role in ("pharmacist", "user", "admin"):
             from dashboard import DashboardApp
             self._frame = DashboardApp(self._root, username, on_logout_callback=self._show_login)
+        else:
+            self._root.resizable(False, False)
+            self._center(900, 580)
+            messagebox.showerror("Account unavailable", "This account does not have an active application role.",
+                                 parent=self._root)
+            self._show_login()
+            return
         self._frame.place(x=0, y=0, relwidth=1, relheight=1)
 
     def run(self):
         self._root.mainloop()
-
 
 if __name__ == "__main__":
     PharmaCareApp().run()

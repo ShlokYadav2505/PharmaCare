@@ -1,6 +1,8 @@
 # signup.py - Account creation for pharmacists and vendors
 
+import os
 import re
+import secrets
 import tkinter as tk
 from tkinter import messagebox, ttk
 import database as db
@@ -17,8 +19,9 @@ class SignupWindow(tk.Toplevel):
         self.grab_set()
         self.configure(bg=st.COLORS["white"])
         self._otp_sent = False
+        self._vendor_invite_code = os.getenv("PHARMACARE_VENDOR_INVITE_CODE", "").strip()
         self._build_ui()
-        self._center(440, 690)
+        self._center(440, 760 if self._vendor_invite_code else 560)
 
     def _center(self, w, h):
         self.update_idletasks()
@@ -38,21 +41,27 @@ class SignupWindow(tk.Toplevel):
     def _build_ui(self):
         tk.Label(self, text="Create Account", font=st.FONTS["heading"],
                  bg=st.COLORS["white"], fg=st.COLORS["primary"]).pack(pady=(14, 8))
-        role_frame = tk.Frame(self, bg=st.COLORS["white"])
-        role_frame.pack(fill="x", padx=30, pady=(0, 7))
-        tk.Label(role_frame, text="Account type", font=st.FONTS["body_bold"],
-                 bg=st.COLORS["white"], fg=st.COLORS["text_dark"]).pack(anchor="w")
         self._role = tk.StringVar(value="Pharmacist")
-        ttk.Combobox(role_frame, textvariable=self._role, values=("Pharmacist", "Vendor"),
-                     state="readonly").pack(fill="x", pady=(2, 0))
+        if self._vendor_invite_code:
+            role_frame = tk.Frame(self, bg=st.COLORS["white"])
+            role_frame.pack(fill="x", padx=30, pady=(0, 7))
+            tk.Label(role_frame, text="Account type", font=st.FONTS["body_bold"],
+                     bg=st.COLORS["white"], fg=st.COLORS["text_dark"]).pack(anchor="w")
+            ttk.Combobox(role_frame, textvariable=self._role,
+                         values=("Pharmacist", "Vendor"), state="readonly"
+                         ).pack(fill="x", pady=(2, 0))
         self._uname = self._field(self, "Username")
         self._email = self._field(self, "Email Address")
         self._pass = self._field(self, "Password", show="*")
         self._cpass = self._field(self, "Confirm Password", show="*")
-        self._business = self._field(self, "Vendor business name (vendors only)")
-        self._contact = self._field(self, "Contact person (vendors only)")
-        self._phone = self._field(self, "Phone (vendors only)")
-        self._address = self._field(self, "Business address (vendors only)")
+        self._vendor_invite = None
+        self._business = self._contact = self._phone = self._address = None
+        if self._vendor_invite_code:
+            self._vendor_invite = self._field(self, "Vendor invite code")
+            self._business = self._field(self, "Vendor business name")
+            self._contact = self._field(self, "Contact person")
+            self._phone = self._field(self, "Phone")
+            self._address = self._field(self, "Business address")
 
         otp_f = tk.Frame(self, bg=st.COLORS["white"])
         otp_f.pack(fill="x", padx=30, pady=(0, 6))
@@ -93,9 +102,16 @@ class SignupWindow(tk.Toplevel):
         if db.get_user_by_email(em):
             self._msg_var.set("Email already registered.")
             return False
-        if self._role.get() == "Vendor" and not self._business.get().strip():
-            self._msg_var.set("Vendor business name is required for vendor accounts.")
-            return False
+        if self._role.get() == "Vendor":
+            invite = self._vendor_invite.get().strip() if self._vendor_invite else ""
+            if (not self._vendor_invite_code or
+                    not secrets.compare_digest(invite.encode("utf-8"),
+                                               self._vendor_invite_code.encode("utf-8"))):
+                self._msg_var.set("A valid vendor invite code is required.")
+                return False
+            if not self._business.get().strip():
+                self._msg_var.set("Vendor business name is required for vendor accounts.")
+                return False
         return True
 
     def _send_otp(self):

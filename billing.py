@@ -264,7 +264,7 @@ class BillingFrame(tk.Frame):
         except ValueError:
             disc = 0
         try:
-            tax = db.calculate_gst(max(sub - disc, 0), 12.0, "local")
+            tax = db.calculate_gst(max(sub - disc, 0), db.SALES_GST_RATE, "local")
         except ValueError:
             tax = {"gst_amount": 0.0, "grand_total": max(sub - disc, 0)}
         self._subtotal.set(f"₹{sub:.2f}")
@@ -296,8 +296,7 @@ class BillingFrame(tk.Frame):
         sub = sum(i["total"] for i in self._items)
         disc = min(disc, sub)
         try:
-            gst_rate = 12.0
-            tax = db.calculate_gst(max(sub - disc, 0), gst_rate, "local")
+            tax = db.calculate_gst(max(sub - disc, 0), db.SALES_GST_RATE, "local")
         except ValueError as exc:
             messagebox.showerror("GST", str(exc), parent=self.winfo_toplevel()); return
         total = tax["grand_total"]
@@ -311,8 +310,6 @@ class BillingFrame(tk.Frame):
 
         ok, result = db.record_bill(
             bill_no, cust, self._items, discount=disc, user_id=self._user_id,
-            gst_rate=gst_rate,
-            gst_mode="local",
             customer_name=customer_name,
             pharmacist_name=self._pharmacist_name,
             pharmacist_email=self._user_email,

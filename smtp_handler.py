@@ -1,4 +1,4 @@
-import smtplib, random, string, threading, os
+import smtplib, secrets, threading, os
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -14,8 +14,9 @@ SMTP_CONFIG = {
     "smtp_port": int(os.getenv("PHARMACARE_SMTP_PORT", "587")),
 }
 
-# In-memory OTP store: { email: {"otp": str, "expires": datetime} }
+# In-memory OTP store: { email: {"otp": str, "expires": datetime, "attempts": int} }
 _otp_store = {}
+MAX_OTP_ATTEMPTS = 5
 
 
 # ── OTP Helpers ───────────────────────────────────────────────────────────────
@@ -24,7 +25,8 @@ def store_otp(email, otp, expiry_minutes=10):
     """Save OTP with expiry time."""
     _otp_store[email.lower()] = {
         "otp":     otp,
-        "expires": datetime.now() + timedelta(minutes=expiry_minutes)
+        "expires": datetime.now() + timedelta(minutes=expiry_minutes),
+        "attempts": 0,
     }
 
 
@@ -40,7 +42,12 @@ def verify_otp(email, otp):
     if datetime.now() > record["expires"]:
         del _otp_store[key]
         return False, "OTP has expired. Please request a new one."
-    if record["otp"] != otp.strip():
+    submitted = str(otp or "").strip()
+    if not secrets.compare_digest(record["otp"], submitted):
+        record["attempts"] += 1
+        if record["attempts"] >= MAX_OTP_ATTEMPTS:
+            del _otp_store[key]
+            return False, "Too many incorrect attempts. Please request a new OTP."
         return False, "Invalid OTP. Please try again."
     del _otp_store[key]
     return True, "OTP verified successfully."
@@ -70,7 +77,7 @@ def _send_raw(to_email, subject, html_body):
 
         return True, "Email sent successfully."
     except smtplib.SMTPAuthenticationError:
-        return False, "SMTP auth failed. Check your email/password in smtp_handler.py."
+        return False, "SMTP authentication failed. Check the configured email environment variables."
     except smtplib.SMTPConnectError:
         return False, "Cannot connect to SMTP server. Check your internet."
     except smtplib.SMTPException as e:
@@ -130,7 +137,7 @@ def _wrap(content):
 # ── Email Template Wrapper ────────────────────────────────────────────────────
 
 def send_otp_email(to_email, purpose="verification", callback=None):
-    """Generate, store, and send an OTP email. Returns the OTP string."""
+    """Generate, store, and send an OTP email."""
     otp = generate_otp()
     store_otp(to_email, otp)
 
@@ -157,7 +164,6 @@ def send_otp_email(to_email, purpose="verification", callback=None):
         _wrap(content),
         callback
     )
-    return otp
 
 
 # ── Public Email Functions ────────────────────────────────────────────────────
@@ -263,5 +269,7 @@ def send_welcome_email(to_email, username, callback=None):
 
 
 def generate_otp(length=6):
-    """Generate a random 6-digit OTP."""
-    return "".join(random.choices(string.digits, k=length))
+    """Generate a cryptographically secure numeric OTP."""
+    if not isinstance(length, int) or length < 1 or length > 10:
+        raise ValueError("OTP length must be between 1 and 10 digits.")
+    return "".join(str(secrets.randbelow(10)) for _ in range(length))
